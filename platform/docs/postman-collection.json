@@ -1,0 +1,570 @@
+{
+  "info": {
+    "name": "AI Coding Agent Platform",
+    "description": "Complete API collection for the AI Coding Agent multi-tenant platform.\n\nSetup:\n1. Run 'Scene 1 > Login' to get a token\n2. Token is auto-saved to {{access_token}} variable\n3. All other requests use it automatically",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "agent_url", "value": "http://localhost:8500" },
+    { "key": "auth_url", "value": "http://localhost:8090" },
+    { "key": "memory_url", "value": "http://localhost:8180" },
+    { "key": "codeexec_url", "value": "http://localhost:8380" },
+    { "key": "access_token", "value": "" },
+    { "key": "refresh_token", "value": "" },
+    { "key": "tenant_id", "value": "default" },
+    { "key": "session_id", "value": "test-session-001" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "🔐 Scene 1: Auth & Session",
+      "item": [
+        {
+          "name": "Signup",
+          "request": {
+            "method": "POST",
+            "url": "{{auth_url}}/auth/signup",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\",\n  \"password\": \"Test@123456\",\n  \"email\": \"test@example.com\",\n  \"tenantId\": \"default\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "    pm.collectionVariables.set('access_token', json.access_token);",
+                  "    pm.collectionVariables.set('refresh_token', json.refresh_token);",
+                  "    pm.collectionVariables.set('tenant_id', json.tenant_id);",
+                  "    pm.test('Login successful', () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{auth_url}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\",\n  \"password\": \"Test@123456\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Token (M2M client_credentials)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "    pm.collectionVariables.set('access_token', json.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{auth_url}}/auth/token",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"grantType\": \"client_credentials\",\n  \"clientId\": \"agent-server\",\n  \"clientSecret\": \"agent-secret\",\n  \"audience\": \"memory-server\",\n  \"tenantId\": \"default\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "    pm.collectionVariables.set('access_token', json.access_token);",
+                  "    pm.collectionVariables.set('refresh_token', json.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{auth_url}}/auth/refresh",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refresh_token}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": "{{auth_url}}/auth/logout",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ]
+          }
+        },
+        {
+          "name": "JWKS (Public Keys)",
+          "request": {
+            "method": "GET",
+            "url": "{{auth_url}}/auth/jwks"
+          }
+        },
+        {
+          "name": "Check Token Blacklist",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{auth_url}}/auth/check-blacklist?jti=test-jti-123",
+              "host": ["{{auth_url}}"],
+              "path": ["auth", "check-blacklist"],
+              "query": [{ "key": "jti", "value": "test-jti-123" }]
+            }
+          }
+        },
+        {
+          "name": "Register Client (Admin)",
+          "request": {
+            "method": "POST",
+            "url": "{{auth_url}}/auth/register",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientId\": \"new-service\",\n  \"clientSecret\": \"new-secret-123\",\n  \"clientName\": \"New Microservice\",\n  \"scopes\": \"read write\",\n  \"tenantId\": \"default\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "💬 Scene 2: AI Chat",
+      "item": [
+        {
+          "name": "Chat Completions (Streaming)",
+          "request": {
+            "method": "POST",
+            "url": "{{agent_url}}/v1/chat/completions",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"coding-agent\",\n  \"messages\": [\n    {\"role\": \"user\", \"content\": \"Help me write a Python function to reverse a string\"}\n  ],\n  \"stream\": true,\n  \"session_id\": \"{{session_id}}\",\n  \"temperature\": 0.7\n}"
+            }
+          }
+        },
+        {
+          "name": "Chat Completions (Non-streaming)",
+          "request": {
+            "method": "POST",
+            "url": "{{agent_url}}/v1/chat/completions",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"coding-agent\",\n  \"messages\": [\n    {\"role\": \"user\", \"content\": \"What is 2+2?\"}\n  ],\n  \"stream\": false,\n  \"session_id\": \"{{session_id}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Chat with Active File Context",
+          "request": {
+            "method": "POST",
+            "url": "{{agent_url}}/v1/chat/completions",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"coding-agent\",\n  \"messages\": [\n    {\"role\": \"user\", \"content\": \"Explain this code\"}\n  ],\n  \"stream\": true,\n  \"session_id\": \"{{session_id}}\",\n  \"active_file\": {\n    \"path\": \"/src/main.py\",\n    \"visible_start\": 1,\n    \"visible_end\": 50\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "Chat with Prompt Version Override",
+          "request": {
+            "method": "POST",
+            "url": "{{agent_url}}/v1/chat/completions",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"coding-agent\",\n  \"messages\": [\n    {\"role\": \"user\", \"content\": \"Search memory for build patterns\"}\n  ],\n  \"stream\": true,\n  \"session_id\": \"{{session_id}}\",\n  \"prompt_version\": \"v1\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List Models",
+          "request": {
+            "method": "GET",
+            "url": "{{agent_url}}/v1/models"
+          }
+        },
+        {
+          "name": "Cancel Child Agent",
+          "request": {
+            "method": "POST",
+            "url": "{{agent_url}}/v1/sessions/{{tenant_id}}:{{session_id}}/children/child-001/cancel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "🧠 Scene 3: Memory",
+      "item": [
+        {
+          "name": "Memory Context (Overview)",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/memory_context",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" }
+          }
+        },
+        {
+          "name": "Memory Set",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/memory_set",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"test-memory-001\",\n  \"content\": \"This is a test memory entry for the coding agent platform.\",\n  \"tags\": [\"test\", \"demo\"],\n  \"namespace\": \"default\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Memory Get",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/memory_get",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"test-memory-001\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Memory Search",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/memory_search",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"coding agent platform\",\n  \"limit\": 10,\n  \"tags\": [\"test\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "Memory List",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/memory_list",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"namespace\": \"default\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Memory Pin",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/memory_pin",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"test-memory-001\",\n  \"pinned\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Memory Delete",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/memory_delete",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"test-memory-001\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🎓 Scene 4: Skill Store",
+      "item": [
+        {
+          "name": "Skill Set",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/skill_set",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"skill-maven-stale-jar\",\n  \"content\": \"## Problem\\nMaven uses stale jar from local repo.\\n\\n## Solution\\n1. Delete tmp-m2-repo\\n2. Rebuild mcp-common\\n3. Rebuild target module\",\n  \"tags\": [\"skill\", \"build\", \"maven\"],\n  \"namespace\": \"skills\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Skill Get",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/skill_get",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"skill-maven-stale-jar\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Skill List",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/skill_list",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"namespace\": \"skills\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Skill History",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/skill_history",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"skill-maven-stale-jar\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Skill Rollback",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/skill_rollback",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"skill-maven-stale-jar\",\n  \"version\": 1\n}"
+            }
+          }
+        },
+        {
+          "name": "Skill Feedback",
+          "request": {
+            "method": "POST",
+            "url": "{{memory_url}}/api/tools/skill_feedback",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"skill-maven-stale-jar\",\n  \"outcome\": \"success\",\n  \"notes\": \"Resolved the issue in 2 minutes\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Skill Triggers",
+          "request": {
+            "method": "GET",
+            "url": "{{memory_url}}/api/tools/skill_triggers"
+          }
+        }
+      ]
+    },
+    {
+      "name": "🖥️ Scene 5: Code Execution",
+      "item": [
+        {
+          "name": "Run Code (Python)",
+          "request": {
+            "method": "POST",
+            "url": "{{codeexec_url}}/api/tools/code_run",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"language\": \"python\",\n  \"code\": \"print('Hello from sandbox!')\\nresult = sum(range(100))\\nprint(f'Sum: {result}')\",\n  \"timeout\": 10\n}"
+            }
+          }
+        },
+        {
+          "name": "Run Code (JavaScript)",
+          "request": {
+            "method": "POST",
+            "url": "{{codeexec_url}}/api/tools/code_run",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"language\": \"javascript\",\n  \"code\": \"console.log('Hello from Node.js sandbox');\\nconsole.log(Array.from({length:10}, (_,i)=>i*i));\",\n  \"timeout\": 10\n}"
+            }
+          }
+        },
+        {
+          "name": "Shell Command",
+          "request": {
+            "method": "POST",
+            "url": "{{codeexec_url}}/api/tools/code_shell",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"command\": \"echo 'Hello' && ls /tmp\",\n  \"timeout\": 5\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📁 Scene 6: Workspace",
+      "item": [
+        {
+          "name": "Current Workspace",
+          "request": {
+            "method": "GET",
+            "url": "{{agent_url}}/api/workspace/current"
+          }
+        },
+        {
+          "name": "Open Workspace",
+          "request": {
+            "method": "POST",
+            "url": "{{agent_url}}/api/workspace/open",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"path\": \"/tmp/test-workspace\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Browse Directory",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{agent_url}}/api/workspace/browse?path=/tmp",
+              "host": ["{{agent_url}}"],
+              "path": ["api", "workspace", "browse"],
+              "query": [{ "key": "path", "value": "/tmp" }]
+            }
+          }
+        },
+        {
+          "name": "List Files",
+          "request": {
+            "method": "GET",
+            "url": "{{agent_url}}/api/workspace/files"
+          }
+        },
+        {
+          "name": "Read File",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{agent_url}}/api/workspace/file?path=README.md",
+              "host": ["{{agent_url}}"],
+              "path": ["api", "workspace", "file"],
+              "query": [{ "key": "path", "value": "README.md" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📊 Scene 7: Ops & Observability",
+      "item": [
+        {
+          "name": "Health Check (Agent)",
+          "request": {
+            "method": "GET",
+            "url": "{{agent_url}}/health",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Health Check (Auth)",
+          "request": {
+            "method": "GET",
+            "url": "{{auth_url}}/auth/health",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Metrics",
+          "request": {
+            "method": "GET",
+            "url": "{{agent_url}}/metrics",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Token Usage",
+          "request": {
+            "method": "GET",
+            "url": "{{agent_url}}/api/usage"
+          }
+        },
+        {
+          "name": "Prompt Versions",
+          "request": {
+            "method": "GET",
+            "url": "{{agent_url}}/api/prompts"
+          }
+        },
+        {
+          "name": "Reranker Weights",
+          "request": {
+            "method": "GET",
+            "url": "{{agent_url}}/api/reranker"
+          }
+        },
+        {
+          "name": "Retrain Reranker",
+          "request": {
+            "method": "POST",
+            "url": "{{agent_url}}/api/reranker/retrain"
+          }
+        },
+        {
+          "name": "Evaluate Reranker",
+          "request": {
+            "method": "GET",
+            "url": "{{agent_url}}/api/reranker/evaluate"
+          }
+        },
+        {
+          "name": "Event Analytics",
+          "request": {
+            "method": "GET",
+            "url": "{{memory_url}}/api/analytics"
+          }
+        }
+      ]
+    }
+  ]
+}

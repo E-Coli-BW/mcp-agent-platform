@@ -1,0 +1,135 @@
+{
+  "suite": "context_compression",
+  "timestamp": "2026-06-04T01:01:31",
+  "summary": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "pass_rate": 0.6666666666666666
+  },
+  "results": [
+    {
+      "name": "debug_needle",
+      "passed": false,
+      "metrics": {
+        "fact_recall": 0.0,
+        "compression_ratio": 0.605,
+        "before_tokens": 2370,
+        "after_tokens": 1434,
+        "messages_before": 51,
+        "messages_after": 39,
+        "investigation_facts": [
+          "NullPointerException at UserService.java:142"
+        ],
+        "has_142": false,
+        "has_UserService": false
+      },
+      "events": [
+        {
+          "session_id": "eval-debug-needle",
+          "turn_number": 22,
+          "event": "pre_compression",
+          "message_count": 51,
+          "token_estimate": 2370,
+          "investigation_summary": "",
+          "timestamp": 1780506091.405791
+        },
+        {
+          "session_id": "eval-debug-needle",
+          "turn_number": 22,
+          "total_tokens": 2370,
+          "budget_tokens": 1500,
+          "usage_pct": 1.58
+        },
+        {
+          "session_id": "eval-debug-needle",
+          "turn_number": 22,
+          "trigger": "token_budget_exceeded",
+          "before_tokens": 2370,
+          "after_tokens": 1434,
+          "messages_dropped": 12,
+          "messages_summarized": 1,
+          "facts_retained": [
+            "NullPointerException at UserService.java:142"
+          ],
+          "compression_ratio": 0.6050632911392405
+        }
+      ],
+      "duration_ms": 13
+    },
+    {
+      "name": "hypothesis_chain",
+      "passed": true,
+      "metrics": {
+        "reasoning_chain_integrity": 1.0,
+        "compression_ratio": 1.0,
+        "eliminated_recalled": {
+          "config": true,
+          "port": true,
+          "auth": true,
+          "race": true
+        },
+        "investigation_eliminations": [],
+        "before_tokens": 551,
+        "after_tokens": 551
+      },
+      "events": [
+        {
+          "session_id": "eval-hypothesis-chain",
+          "turn_number": 18,
+          "new_facts": [
+            "null injection is the root cause!"
+          ],
+          "new_eliminations": [],
+          "hypothesis_changed": true
+        },
+        {
+          "session_id": "eval-hypothesis-chain",
+          "turn_number": 18,
+          "trigger": "token_budget_exceeded",
+          "before_tokens": 551,
+          "after_tokens": 551,
+          "messages_dropped": 0,
+          "messages_summarized": 0,
+          "facts_retained": [
+            "null injection is the root cause!"
+          ],
+          "compression_ratio": 1.0
+        }
+      ],
+      "duration_ms": 0
+    },
+    {
+      "name": "multi_file_debug",
+      "passed": true,
+      "metrics": {
+        "file_coverage": 4,
+        "files_total": 4,
+        "coverage_ratio": 1.0,
+        "compression_ratio": 1.0,
+        "before_tokens": 591,
+        "after_tokens": 591,
+        "files_found": {
+          "src/main/java/com/example/Controller.java": true,
+          "src/main/java/com/example/Service.java": true,
+          "src/main/java/com/example/Repository.java": true,
+          "src/main/resources/db/migration/V3__add_column.sql": true
+        }
+      },
+      "events": [
+        {
+          "session_id": "eval-multi-file",
+          "turn_number": 16,
+          "trigger": "token_budget_exceeded",
+          "before_tokens": 591,
+          "after_tokens": 591,
+          "messages_dropped": 0,
+          "messages_summarized": 0,
+          "facts_retained": [],
+          "compression_ratio": 1.0
+        }
+      ],
+      "duration_ms": 0
+    }
+  ]
+}

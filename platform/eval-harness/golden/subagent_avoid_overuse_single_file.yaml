@@ -1,0 +1,48 @@
+id: subagent_avoid_overuse_single_file
+description: |
+  NEGATIVE engineering case for the subagent feature.
+
+  A well-engineered agent must not reach for spawn_subagent on tasks
+  where a direct tool call is faster and cheaper. The pattern we're
+  watching for: "agent learns a new tool, applies it everywhere even
+  when inappropriate" — a real failure mode every time a new tool
+  ships.
+
+  This case asks ONE tiny question that needs ONE file_read. The
+  agent should answer it with a single file_read call. If the agent
+  spawned a subagent for this, that's a regression — adds latency,
+  burns tokens, opaque trace.
+
+  We assert this via `tools_forbidden: [spawn_subagent]` — the
+  tool_selection scorer fails the case if it appears in the trace.
+
+prompt: |
+  Read the file README.md in the workspace root and tell me what the
+  very first heading is. Reply with just the heading text, nothing
+  else.
+
+tags: [subagent, engineering, anti-pattern, fleet]
+
+expected:
+  # The good answer = direct file_read, return heading.
+  tools_called_min: 1
+  tools_called_max: 4                # 1-2 reads max; 4 leaves room for retries
+  tools_forbidden:                   # the engineering signal
+    - spawn_subagent
+  final_must_contain:
+    # The repo-root README's first heading is "AI Coding Agent Platform".
+    # "AI Coding Agent" is specific enough to avoid false positives from
+    # generic LLM preamble.
+    - "AI Coding Agent"
+  final_must_not_contain:
+    - "cannot read"
+    - "don't have access"
+    - "File not found"
+  max_latency_ms: 30000
+
+  # Efficiency: ideally the agent does 1 file_read and answers.
+  # Tighter than tools_called_max so a passing-but-chatty agent gets
+  # caught by the efficiency scorer even when the answer scorer is
+  # happy.
+  max_tool_calls_efficient: 2
+  max_total_tokens_efficient: 1500

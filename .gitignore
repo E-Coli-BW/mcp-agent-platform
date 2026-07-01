@@ -1,0 +1,16 @@
+**/target/
+**/dist/
+**/build/
+**/*.egg-info/
+**/node_modules/
+**/.venv/
+**/tmp-m2-repo/
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+.env
+*.local
+tmp/
+*.pyc
+__pycache__/

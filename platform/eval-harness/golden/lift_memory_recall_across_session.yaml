@@ -1,0 +1,33 @@
+id: lift_memory_recall_across_session
+description: |
+  ENGINEERING-EFFECT case: the bare LLM CANNOT possibly answer this —
+  the prompt asks about a fact that needs prior context the bare model
+  doesn't have. The agent SHOULD succeed because memory_search will
+  surface the prior answer from the persistent store.
+
+  IMPORTANT: the prompt does NOT echo "blue" back to itself, otherwise
+  the bare LLM could pattern-match its way through. This is the only
+  reliable way to attribute lift to engineering.
+
+  Setup precondition (do this once before the suite runs):
+    curl -X POST http://localhost:8180/api/v1/memory \
+      -H "Authorization: Bearer $(cat .dev-run/jwt.txt)" \
+      -d '{"key":"fav-color-eval","content":"My favorite color is blue.",
+           "namespace":"default","tags":["preference"]}'
+
+  Expected outcomes:
+    bare LLM → won't know "blue"           (FAIL)
+    agent    → calls memory_search → "blue" (PASS)
+    lift scorer → +lift
+prompt: |
+  Search my saved memories for any preference I've recorded about
+  colors and tell me my favorite color.
+tags: [memory, engineering, lift, requires_setup]
+expected:
+  tools_called: [memory_search]
+  final_must_contain: ["blue"]
+  final_must_not_contain: ["don't know", "cannot find", "no preference"]
+  max_latency_ms: 30000
+
+  # THE engineering signal — implicitly enables baseline call.
+  expects_agent_lift: true

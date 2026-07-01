@@ -1,0 +1,276 @@
+[
+  {
+    "id": "bfcl_simple_001_weather",
+    "category": "simple",
+    "question": "What's the current weather in San Francisco in Fahrenheit?",
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "get_current_weather",
+        "description": "Get the current weather in a given location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {"type": "string", "description": "City and state, e.g. San Francisco, CA"},
+            "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+          },
+          "required": ["location", "unit"]
+        }
+      }
+    }],
+    "expected": {
+      "name": "get_current_weather",
+      "arguments": {
+        "location": ["San Francisco, CA", "San Francisco", "SF"],
+        "unit": "fahrenheit"
+      }
+    }
+  },
+  {
+    "id": "bfcl_simple_002_calculator",
+    "category": "simple",
+    "question": "Calculate 42 multiplied by 17.",
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "calculate",
+        "description": "Evaluate a binary arithmetic expression.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "a": {"type": "number"},
+            "b": {"type": "number"},
+            "op": {"type": "string", "enum": ["add", "subtract", "multiply", "divide"]}
+          },
+          "required": ["a", "b", "op"]
+        }
+      }
+    }],
+    "expected": {
+      "name": "calculate",
+      "arguments": {"a": 42, "b": 17, "op": "multiply"}
+    }
+  },
+  {
+    "id": "bfcl_simple_003_bool_arg",
+    "category": "simple",
+    "question": "Send an email to alice@example.com saying 'Meeting at 3pm' with HIGH priority. Mark it as urgent.",
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "send_email",
+        "description": "Send an email message",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "to": {"type": "string"},
+            "body": {"type": "string"},
+            "priority": {"type": "string", "enum": ["low", "normal", "high"]},
+            "urgent": {"type": "boolean"}
+          },
+          "required": ["to", "body", "priority", "urgent"]
+        }
+      }
+    }],
+    "expected": {
+      "name": "send_email",
+      "arguments": {
+        "to": "alice@example.com",
+        "body": ["Meeting at 3pm", "Meeting at 3pm."],
+        "priority": "high",
+        "urgent": true
+      }
+    }
+  },
+  {
+    "id": "bfcl_simple_004_enum_lowercase",
+    "category": "simple",
+    "question": "Sort the list [3,1,4,1,5,9,2,6] in descending order.",
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "sort_list",
+        "description": "Sort an array of numbers",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "items": {"type": "array", "items": {"type": "number"}},
+            "order": {"type": "string", "enum": ["asc", "desc"]}
+          },
+          "required": ["items", "order"]
+        }
+      }
+    }],
+    "expected": {
+      "name": "sort_list",
+      "arguments": {"items": [3, 1, 4, 1, 5, 9, 2, 6], "order": "desc"}
+    }
+  },
+  {
+    "id": "bfcl_simple_005_optional_arg",
+    "category": "simple",
+    "question": "Search for documentation about Python's asyncio. I only need the top 5 results.",
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "search_docs",
+        "description": "Full-text search over documentation.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string"},
+            "limit": {"type": "integer", "description": "Max results (default 10)"}
+          },
+          "required": ["query"]
+        }
+      }
+    }],
+    "expected": {
+      "name": "search_docs",
+      "arguments": {
+        "query": ["Python asyncio", "asyncio", "Python's asyncio", "asyncio Python"],
+        "limit": 5
+      }
+    }
+  },
+  {
+    "id": "bfcl_simple_006_disambiguation",
+    "category": "simple",
+    "question": "Book a flight from Paris to Tokyo on July 15th, 2026 for 2 adults in business class.",
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "book_flight",
+        "description": "Book an airline ticket",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "origin": {"type": "string", "description": "IATA code or city"},
+            "destination": {"type": "string"},
+            "date": {"type": "string", "description": "ISO 8601 date"},
+            "passengers": {"type": "integer"},
+            "class": {"type": "string", "enum": ["economy", "premium_economy", "business", "first"]}
+          },
+          "required": ["origin", "destination", "date", "passengers", "class"]
+        }
+      }
+    }],
+    "expected": {
+      "name": "book_flight",
+      "arguments": {
+        "origin": ["Paris", "PAR", "CDG"],
+        "destination": ["Tokyo", "TYO", "NRT", "HND"],
+        "date": ["2026-07-15", "July 15, 2026", "07/15/2026"],
+        "passengers": 2,
+        "class": "business"
+      }
+    }
+  },
+  {
+    "id": "bfcl_simple_007_string_array",
+    "category": "simple",
+    "question": "Add the tags 'python', 'asyncio', and 'tutorial' to the article with id 'art_42'.",
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "tag_article",
+        "description": "Apply tags to an article",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "article_id": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["article_id", "tags"]
+        }
+      }
+    }],
+    "expected": {
+      "name": "tag_article",
+      "arguments": {
+        "article_id": "art_42",
+        "tags": [["python", "asyncio", "tutorial"]]
+      }
+    }
+  },
+  {
+    "id": "bfcl_simple_008_must_not_call",
+    "category": "simple",
+    "question": "Hi there! How are you doing today?",
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "get_current_weather",
+        "description": "Get the current weather in a given location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {"type": "string"},
+            "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+          },
+          "required": ["location", "unit"]
+        }
+      }
+    }],
+    "expected": {
+      "name": "__none__",
+      "arguments": {}
+    }
+  },
+  {
+    "id": "bfcl_simple_009_unit_inference",
+    "category": "simple",
+    "question": "How hot is it in Cairo right now?",
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "get_current_weather",
+        "description": "Get the current weather in a given location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {"type": "string"},
+            "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+          },
+          "required": ["location", "unit"]
+        }
+      }
+    }],
+    "expected": {
+      "name": "get_current_weather",
+      "arguments": {
+        "location": ["Cairo", "Cairo, Egypt"],
+        "unit": ["celsius", "fahrenheit"]
+      }
+    }
+  },
+  {
+    "id": "bfcl_simple_010_negative_number",
+    "category": "simple",
+    "question": "Convert -40 degrees Celsius to Fahrenheit.",
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "convert_temperature",
+        "description": "Convert temperature between units",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "value": {"type": "number"},
+            "from_unit": {"type": "string", "enum": ["celsius", "fahrenheit", "kelvin"]},
+            "to_unit": {"type": "string", "enum": ["celsius", "fahrenheit", "kelvin"]}
+          },
+          "required": ["value", "from_unit", "to_unit"]
+        }
+      }
+    }],
+    "expected": {
+      "name": "convert_temperature",
+      "arguments": {
+        "value": -40,
+        "from_unit": "celsius",
+        "to_unit": "fahrenheit"
+      }
+    }
+  }
+]

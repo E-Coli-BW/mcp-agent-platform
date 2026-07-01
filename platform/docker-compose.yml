@@ -1,0 +1,155 @@
+# Docker Compose — Full stack for development
+# Usage: docker compose up -d
+# Starts: Redis Stack (vector search) + PostgreSQL
+
+services:
+  # Redis Stack — includes RediSearch for vector similarity search
+  # Used by: RAG vector retriever, conversation store, memory server cache
+  redis:
+    image: redis/redis-stack:latest
+    container_name: agent-redis
+    ports:
+      - "6379:6379"      # Redis
+      - "8001:8001"      # RedisInsight (web UI)
+    volumes:
+      - redis-data:/data
+    environment:
+      - REDIS_ARGS=--save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # PostgreSQL — for memory server persistent storage
+  postgres:
+    image: postgres:16-alpine
+    container_name: agent-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: memorydb
+      POSTGRES_USER: memory
+      POSTGRES_PASSWORD: memory-dev-password
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Kafka — event streaming for tool audit + analytics
+  # Used by: Python agent (producer), Java audit consumer
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    container_name: agent-kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"      # External listener (for host apps)
+    environment:
+      # KRaft mode (no Zookeeper needed)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,EXTERNAL://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Kafka UI — browse topics and messages (optional, http://localhost:8080)
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: agent-kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: agent-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # Nacos — service discovery & config center (http://localhost:8848/nacos)
+  # Used by: common-spi NacosDiscovery for service registration + resolution
+  nacos:
+    image: nacos/nacos-server:v2.4.3-slim
+    container_name: agent-nacos
+    ports:
+      - "8848:8848"      # HTTP API + console
+      - "9848:9848"      # gRPC (client-server)
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 256m
+      JVM_XMX: 256m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/v1/console/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Elasticsearch — full-text search for memory storage
+  # Used by: memory-server ElasticsearchMemoryBackend
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: agent-elasticsearch
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Jaeger — distributed tracing UI (http://localhost:16686)
+  # Receives OTLP spans from Python agent + Java backends
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: agent-jaeger
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC receiver
+      - "4318:4318"     # OTLP HTTP receiver
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+# ── Quick Reference ──────────────────────────────────────────
+# Start:    docker-compose up -d
+# Stop:     docker-compose down
+# Logs:     docker-compose logs -f redis
+# Reset:    docker-compose down -v  (deletes data)
+#
+# Redis CLI:  docker exec -it agent-redis redis-cli
+# Check RediSearch: docker exec -it agent-redis redis-cli MODULE LIST
+# RedisInsight UI:  http://localhost:8001
+#
+# After starting, configure services:
+#   Agent server:    AGENT_RAG_BACKEND=redis AGENT_REDIS_URL=redis://localhost:6379/2
+#   Memory server:   spring.data.redis.host=localhost (already default)
+#   Completion:      No Redis needed (Caffeine in-process cache)
+
+volumes:
+  redis-data:
+  pg-data:
+  kafka-data:
+  es-data:

@@ -1,0 +1,32 @@
+id: explain_recursion
+description: |
+  Open-ended pedagogy case — measures whether the agent EXPLAINS code
+  rather than just dumping it. Deterministic scorers can't catch "did
+  you reason before showing code?", so this is the LLM-judge case.
+
+  This case is skipped unless EVAL_JUDGE_MODEL is set, so it won't
+  break local dev runs for people without a judge API key.
+prompt: |
+  Explain what recursion is to someone who just learned about loops.
+  Use an analogy first, then a small concrete example. Don't just
+  dump code — explain WHY recursion is useful and when it isn't.
+tags: [pedagogy, judge]
+expected:
+  # Cheap deterministic scorers still apply — judge is on top.
+  max_latency_ms: 60000
+  final_must_contain: ["recursion"]
+  # Open-ended quality — what the judge actually grades.
+  judge:
+    rubric: |
+      A good explanation:
+        - Uses an analogy BEFORE introducing code
+        - Explains the "why" (when recursion is appropriate)
+        - Mentions a limitation or downside (stack depth, etc.)
+        - Has a small concrete example, not a wall of code
+      A poor explanation:
+        - Dumps code first with no motivation
+        - Skips the trade-offs / when-not-to-use
+        - Is condescending or assumes too much
+    criteria: [analogy_quality, reasoning, completeness, tone]
+    min_score: 3.5      # be lenient on local 7B models; tighten for cloud
+    samples: 3

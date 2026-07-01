@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coding Agent IDE</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #1e1e1e;
+            --bg-secondary: #252526;
+            --bg-tertiary: #2d2d2d;
+            --bg-hover: #37373d;
+            --border: #3e3e42;
+            --text: #cccccc;
+            --text-bright: #e0e0e0;
+            --text-dim: #858585;
+            --accent: #0078d4;
+            --accent-hover: #1a8cff;
+            --green: #4ec9b0;
+            --orange: #ce9178;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg-primary); color: var(--text); height: 100vh; overflow: hidden; }
+
+        /* Header */
+        #header { height: 36px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 12px; gap: 12px; flex-shrink: 0; }
+        #header .logo { color: var(--accent); font-weight: 600; font-size: 13px; }
+        #workspace-path { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 2px 8px; font-size: 12px; flex: 1; max-width: 400px; outline: none; font-family: 'Cascadia Code', 'Fira Code', monospace; }
+        #workspace-path:focus { border-color: var(--accent); }
+        .header-btn { background: var(--accent); color: white; border: none; padding: 2px 10px; border-radius: 3px; font-size: 11px; cursor: pointer; }
+        .header-btn:hover { background: var(--accent-hover); }
+        #status { font-size: 11px; color: var(--text-dim); margin-left: auto; }
+
+        /* Main layout */
+        #main { flex: 1; display: flex; overflow: hidden; }
+
+        /* Sidebar */
+        #sidebar { width: 220px; background: var(--bg-secondary); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+        #sidebar-header { padding: 8px 12px; font-size: 11px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.5px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        #sidebar-header button { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 14px; }
+        #sidebar-header button:hover { color: var(--text); }
+        #file-tree { flex: 1; overflow-y: auto; padding: 4px 0; font-size: 13px; }
+        .tree-item { padding: 2px 8px 2px 0; cursor: pointer; display: flex; align-items: center; white-space: nowrap; user-select: none; }
+        .tree-item:hover { background: var(--bg-hover); }
+        .tree-item.active { background: var(--bg-hover); color: var(--text-bright); }
+        .tree-icon { width: 16px; text-align: center; margin-right: 4px; font-size: 12px; flex-shrink: 0; }
+        .tree-name { overflow: hidden; text-overflow: ellipsis; }
+        .tree-dir > .tree-icon { color: var(--accent); }
+        .tree-file > .tree-icon { color: var(--text-dim); }
+
+        /* Editor */
+        #editor-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        #tabs { height: 35px; background: var(--bg-secondary); display: flex; align-items: stretch; overflow-x: auto; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+        .tab { padding: 0 12px; display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; border-right: 1px solid var(--border); color: var(--text-dim); white-space: nowrap; }
+        .tab:hover { background: var(--bg-tertiary); }
+        .tab.active { background: var(--bg-primary); color: var(--text-bright); border-bottom: 1px solid var(--accent); margin-bottom: -1px; }
+        .tab .close { font-size: 14px; opacity: 0; margin-left: 4px; }
+        .tab:hover .close { opacity: 0.7; }
+        .tab .close:hover { opacity: 1; }
+        .tab .modified { color: var(--orange); margin-left: 2px; font-size: 10px; }
+        #editor-container { flex: 1; overflow: hidden; }
+        #welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-dim); gap: 12px; height: 100%; }
+        #welcome h2 { font-weight: 300; font-size: 20px; }
+        #welcome p { font-size: 13px; }
+
+        /* Bottom panel */
+        #bottom-panel { height: 300px; border-top: 2px solid var(--border); display: flex; flex-direction: column; background: var(--bg-secondary); flex-shrink: 0; }
+        #panel-header { height: 28px; display: flex; align-items: center; padding: 0 12px; font-size: 11px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+        #panel-header .active-tab { color: var(--text-bright); border-bottom: 1px solid var(--accent); padding-bottom: 4px; }
+        #messages { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
+        .msg { padding: 6px 10px; border-radius: 6px; font-size: 13px; line-height: 1.5; max-width: 100%; word-break: break-word; }
+        .msg.user { background: #264f78; align-self: flex-end; max-width: 70%; border-radius: 6px 6px 2px 6px; }
+        .msg.assistant { background: var(--bg-tertiary); }
+        .msg.assistant pre { background: var(--bg-primary); padding: 8px; border-radius: 4px; overflow-x: auto; margin: 6px 0; }
+        .msg.assistant code { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; }
+        .msg.assistant p { margin: 4px 0; }
+        .tool-chip { display: flex; align-items: center; gap: 6px; background: #1a3a1a; border: 1px solid #2a5a2a; border-radius: 4px; padding: 4px 10px; font-size: 11px; color: var(--green); cursor: pointer; margin: 2px 0; transition: all 0.3s ease; }
+        .tool-chip:hover { background: #2a4a2a; }
+        .tool-chip.write-tool { background: #3a2a1a; border-color: #5a4a2a; color: var(--orange); }
+        .tool-chip.executing { opacity: 0.7; }
+        .tool-chip.executing .tool-spinner { display: inline-block; }
+        .tool-chip.completed .tool-status { display: inline-block; }
+        .tool-spinner { display: none; width: 10px; height: 10px; border: 1.5px solid var(--green); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        .tool-chip.write-tool .tool-spinner { border-color: var(--orange); border-top-color: transparent; }
+        .tool-status { display: none; font-size: 10px; }
+        .tool-calls-group { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #input-area { padding: 8px 12px; display: flex; gap: 8px; border-top: 1px solid var(--border); }
+        #input { flex: 1; padding: 6px 10px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 13px; outline: none; resize: none; font-family: inherit; min-height: 32px; max-height: 80px; }
+        #input:focus { border-color: var(--accent); }
+        #send { padding: 6px 16px; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
+        #send:hover { background: var(--accent-hover); }
+        #send:disabled { background: var(--bg-tertiary); cursor: not-allowed; }
+
+        /* Resize */
+        #resize-handle { height: 4px; cursor: ns-resize; background: transparent; }
+        #resize-handle:hover { background: var(--accent); }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #777; }
+    </style>
+</head>
+<body>
+    <!-- Login Overlay -->
+    <div id="login-overlay" style="display:none; position:fixed; inset:0; background:var(--bg-primary); z-index:9999; align-items:center; justify-content:center;">
+        <div style="background:var(--bg-secondary); border:1px solid var(--border); border-radius:8px; padding:32px; width:360px;">
+            <!-- Login Form -->
+            <div id="login-form">
+                <h2 style="color:var(--text-bright); margin-bottom:20px; font-size:18px;">🤖 Coding Agent Login</h2>
+                <input id="login-username" type="text" placeholder="Username" onkeydown="if(event.key==='Enter')document.getElementById('login-password').focus()" style="width:100%; padding:8px 12px; margin-bottom:12px; background:var(--bg-tertiary); border:1px solid var(--border); border-radius:4px; color:var(--text); outline:none;">
+                <input id="login-password" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')handleLogin()" style="width:100%; padding:8px 12px; margin-bottom:12px; background:var(--bg-tertiary); border:1px solid var(--border); border-radius:4px; color:var(--text); outline:none;">
+                <div id="login-error" style="color:#f44; font-size:12px; margin-bottom:8px;"></div>
+                <button onclick="handleLogin()" style="width:100%; padding:8px; background:var(--accent); color:white; border:none; border-radius:4px; cursor:pointer; font-size:14px;">Login</button>
+                <p style="text-align:center; margin-top:12px; font-size:12px; color:var(--text-dim);">Don't have an account? <a href="#" onclick="toggleSignup(true)" style="color:var(--accent);">Sign up</a></p>
+            </div>
+            <!-- Signup Form -->
+            <div id="signup-form" style="display:none;">
+                <h2 style="color:var(--text-bright); margin-bottom:20px; font-size:18px;">🤖 Create Account</h2>
+                <input id="signup-username" type="text" placeholder="Username" style="width:100%; padding:8px 12px; margin-bottom:12px; background:var(--bg-tertiary); border:1px solid var(--border); border-radius:4px; color:var(--text); outline:none;">
+                <input id="signup-password" type="password" placeholder="Password (min 8 chars)" style="width:100%; padding:8px 12px; margin-bottom:12px; background:var(--bg-tertiary); border:1px solid var(--border); border-radius:4px; color:var(--text); outline:none;">
+                <input id="signup-email" type="email" placeholder="Email (optional)" style="width:100%; padding:8px 12px; margin-bottom:12px; background:var(--bg-tertiary); border:1px solid var(--border); border-radius:4px; color:var(--text); outline:none;">
+                <input id="signup-tenant" type="text" placeholder="Tenant ID" value="default" onkeydown="if(event.key==='Enter')handleSignup()" style="width:100%; padding:8px 12px; margin-bottom:12px; background:var(--bg-tertiary); border:1px solid var(--border); border-radius:4px; color:var(--text); outline:none;">
+                <div id="signup-error" style="color:#f44; font-size:12px; margin-bottom:8px;"></div>
+                <button onclick="handleSignup()" style="width:100%; padding:8px; background:var(--accent); color:white; border:none; border-radius:4px; cursor:pointer; font-size:14px;">Create Account</button>
+                <p style="text-align:center; margin-top:12px; font-size:12px; color:var(--text-dim);">Already have an account? <a href="#" onclick="toggleSignup(false)" style="color:var(--accent);">Login</a></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function toggleSignup(show) {
+        document.getElementById('login-form').style.display = show ? 'none' : 'block';
+        document.getElementById('signup-form').style.display = show ? 'block' : 'none';
+    }
+
+    // ── Auth State ──────────────────────────────────────────
+    // Access token in memory only (XSS-safe — not in localStorage)
+    let authToken = null;
+    let refreshToken = null;
+    let currentUser = null;
+    let currentTenant = null;
+    let currentRoles = [];
+
+    // Restore session from localStorage (username/tenant for display only)
+    // Token must be re-acquired via refresh or re-login
+    const savedUser = localStorage.getItem('auth_user');
+    const savedRefresh = localStorage.getItem('auth_refresh');
+    if (savedUser && savedRefresh) {
+        currentUser = savedUser;
+        currentTenant = localStorage.getItem('auth_tenant');
+        refreshToken = savedRefresh;
+    }
+
+    function showLogin() {
+        document.getElementById('login-overlay').style.display = 'flex';
+        document.getElementById('main-app').style.display = 'none';
+    }
+
+    function showApp() {
+        document.getElementById('login-overlay').style.display = 'none';
+        document.getElementById('main-app').style.display = 'flex';
+        const roleLabel = currentRoles.length > 0
+            ? currentRoles[0].replace('ROLE_', '').toLowerCase()
+            : '';
+        document.getElementById('current-user').textContent =
+            currentUser + (roleLabel ? ' (' + roleLabel + ')' : '');
+        document.getElementById('current-user').title =
+            'Tenant: ' + currentTenant + '\nRoles: ' + currentRoles.join(', ');
+    }
+
+    async function handleLogin() {
+        const username = document.getElementById('login-username').value;
+        const password = document.getElementById('login-password').value;
+        const errorEl = document.getElementById('login-error');
+        const btn = document.querySelector('#login-form button');
+        errorEl.textContent = '';
+        btn.disabled = true;
+        btn.textContent = 'Logging in...';
+
+        try {
+            const resp = await fetch('/auth/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, password})
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+                authToken = data.access_token;
+                refreshToken = data.refresh_token;
+                currentUser = username;
+                currentTenant = data.tenant_id;
+
+                // Parse JWT to extract roles (no verification needed — display only)
+                try {
+                    const payload = JSON.parse(atob(authToken.split('.')[1]));
+                    currentRoles = payload.roles || [];
+                } catch(e) { currentRoles = []; }
+
+                // Only store non-sensitive data + refresh token
+                localStorage.setItem('auth_user', currentUser);
+                localStorage.setItem('auth_tenant', currentTenant);
+                localStorage.setItem('auth_refresh', refreshToken);
+                // access_token stays in memory only — NOT in localStorage
+                showApp();
+            } else {
+                errorEl.textContent = data.error_description || data.error || 'Login failed';
+            }
+        } catch (e) {
+            errorEl.textContent = 'Connection error — is the server running?';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Login';
+        }
+    }
+
+    async function handleSignup() {
+        const username = document.getElementById('signup-username').value;
+        const password = document.getElementById('signup-password').value;
+        const email = document.getElementById('signup-email').value;
+        const tenantId = document.getElementById('signup-tenant').value;
+        const errorEl = document.getElementById('signup-error');
+        const btn = document.querySelector('#signup-form button');
+        errorEl.textContent = '';
+        btn.disabled = true;
+        btn.textContent = 'Creating account...';
+
+        try {
+            const resp = await fetch('/auth/signup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, password, email, tenant_id: tenantId})
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+                // Auto-login after signup
+                document.getElementById('login-username').value = username;
+                document.getElementById('login-password').value = password;
+                toggleSignup(false);
+                await handleLogin();
+            } else {
+                errorEl.textContent = data.error || 'Signup failed';
+            }
+        } catch (e) {
+            errorEl.textContent = 'Connection error — is the server running?';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Create Account';
+        }
+    }
+
+    async function handleLogout() {
+        // Blacklist access token + revoke refresh tokens via backend
+        if (authToken) {
+            try {
+                await fetch('/auth/logout', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + authToken }
+                });
+            } catch(e) { /* best effort */ }
+        }
+        authToken = null;
+        refreshToken = null;
+        currentUser = null;
+        currentTenant = null;
+        currentRoles = [];
+        localStorage.removeItem('auth_user');
+        localStorage.removeItem('auth_tenant');
+        localStorage.removeItem('auth_refresh');
+        showLogin();
+    }
+
+    /**
+     * Auto-refresh: silently get a new access token using the refresh token.
+     * Called on page load (restore session) and on 401 responses.
+     */
+    async function tryRefreshToken() {
+        if (!refreshToken) return false;
+        try {
+            const resp = await fetch('/auth/refresh', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({refresh_token: refreshToken})
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                authToken = data.access_token;
+                refreshToken = data.refresh_token;
+                localStorage.setItem('auth_refresh', refreshToken);
+                // Parse roles from new token
+                try {
+                    const payload = JSON.parse(atob(authToken.split('.')[1]));
+                    currentRoles = payload.roles || [];
+                } catch(e) {}
+                return true;
+            }
+        } catch(e) {}
+        // Refresh failed — force re-login
+        return false;
+    }
+
+    /**
+     * Fetch wrapper that auto-refreshes on 401.
+     * Use this instead of raw fetch() for all authenticated API calls.
+     */
+    async function authFetch(url, opts = {}) {
+        if (!opts.headers) opts.headers = {};
+        if (authToken) opts.headers['Authorization'] = 'Bearer ' + authToken;
+
+        let resp = await fetch(url, opts);
+
+        // If 401, try silent refresh once
+        if (resp.status === 401 && refreshToken) {
+            const refreshed = await tryRefreshToken();
+            if (refreshed) {
+                opts.headers['Authorization'] = 'Bearer ' + authToken;
+                resp = await fetch(url, opts);
+            } else {
+                handleLogout();
+            }
+        }
+        return resp;
+    }
+    </script>
+
+    <div id="main-app" style="display:flex; flex-direction:column; height:100vh;">
+    <div id="header">
+        <span class="logo">🤖 Coding Agent</span>
+        <input id="workspace-path" placeholder="~/projects/my-app" title="Workspace path">
+        <button class="header-btn" onclick="openWorkspace()">Open</button>
+        <span id="status">Ready</span>
+        <span id="current-user" style="font-size: 12px; color: var(--green);"></span>
+        <button onclick="handleLogout()" class="header-btn" style="background: var(--bg-tertiary); border: 1px solid var(--border);">Logout</button>
+    </div>
+
+    <div id="main">
+        <div id="sidebar">
+            <div id="sidebar-header">
+                <span>Explorer</span>
+                <button onclick="refreshTree()" title="Refresh">⟳</button>
+            </div>
+            <div id="file-tree"></div>
+        </div>
+        <div id="editor-area">
+            <div id="tabs"></div>
+            <div id="editor-container">
+                <div id="welcome">
+                    <h2>Coding Agent IDE</h2>
+                    <p>Open a workspace or ask the agent to create files</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="resize-handle"></div>
+
+    <div id="bottom-panel">
+        <div id="panel-header"><span class="active-tab">Chat</span></div>
+        <div id="messages"></div>
+        <div id="input-area">
+            <textarea id="input" placeholder="Ask the agent... (Enter to send)" rows="1"></textarea>
+            <button id="send" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+    </div><!-- end main-app -->
+
+    <script>
+    // Check auth on page load — try silent refresh if we have a stored refresh token
+    (async function init() {
+        if (savedUser && savedRefresh) {
+            const refreshed = await tryRefreshToken();
+            if (refreshed) {
+                showApp();
+            } else {
+                showLogin();
+            }
+        } else {
+            showLogin();
+        }
+    })();
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.min.js"></script>
+    <script>
+    const API = location.origin;
+    const sessionId = 'ide-' + Math.random().toString(36).slice(2, 10);
+    let editor = null;
+    let openTabs = [];
+    let activeTab = null;
+    let monacoReady = false;
+
+    // Monaco setup
+    require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }});
+    require(['vs/editor/editor.main'], function () {
+        monaco.editor.defineTheme('agent-dark', {
+            base: 'vs-dark', inherit: true, rules: [],
+            colors: { 'editor.background': '#1e1e1e' }
+        });
+        monacoReady = true;
+    });
+
+    // ── Workspace ──
+    async function loadCurrentWorkspace() {
+        try {
+            const resp = await fetch(`${API}/api/workspace/current`);
+            const data = await resp.json();
+            document.getElementById('workspace-path').value = data.path;
+            if (data.exists) refreshTree();
+        } catch(e) {}
+    }
+
+    async function openWorkspace() {
+        const path = document.getElementById('workspace-path').value.trim();
+        if (!path) return;
+        try {
+            const resp = await fetch(`${API}/api/workspace/open`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({path})
+            });
+            const data = await resp.json();
+            document.getElementById('workspace-path').value = data.path;
+            openTabs.forEach(t => t.model?.dispose());
+            openTabs = []; activeTab = null;
+            renderTabs(); showWelcome(); refreshTree();
+        } catch(e) { alert('Failed: ' + e.message); }
+    }
+
+    // ── File Tree ──
+    async function refreshTree() {
+        try {
+            const resp = await fetch(`${API}/api/workspace/files`);
+            const data = await resp.json();
+            const el = document.getElementById('file-tree');
+            el.innerHTML = '';
+            buildTree(data.tree, el, 0);
+        } catch(e) {
+            document.getElementById('file-tree').innerHTML = '<div style="padding:12px;color:#858585">No workspace</div>';
+        }
+    }
+
+    function buildTree(nodes, container, depth) {
+        for (const node of nodes) {
+            if (node.type === 'directory') {
+                let expanded = false;
+                const item = document.createElement('div');
+                item.className = 'tree-item tree-dir';
+                item.style.paddingLeft = (12 + depth * 14) + 'px';
+                item.innerHTML = `<span class="tree-icon">▶</span><span class="tree-name">${node.name}</span>`;
+                const children = document.createElement('div');
+                children.style.display = 'none';
+                buildTree(node.children || [], children, depth + 1);
+                item.onclick = () => { expanded = !expanded; children.style.display = expanded ? 'block' : 'none'; item.querySelector('.tree-icon').textContent = expanded ? '▼' : '▶'; };
+                container.appendChild(item);
+                container.appendChild(children);
+            } else {
+                const item = document.createElement('div');
+                item.className = 'tree-item tree-file';
+                item.style.paddingLeft = (12 + depth * 14) + 'px';
+                const icon = fileIcon(node.name);
+                item.innerHTML = `<span class="tree-icon">${icon}</span><span class="tree-name">${node.name}</span>`;
+                item.onclick = () => openFile(node.path);
+                container.appendChild(item);
+            }
+        }
+    }
+
+    function fileIcon(name) {
+        const ext = name.split('.').pop().toLowerCase();
+        return {py:'🐍',js:'📜',ts:'📘',java:'☕',json:'{}',md:'📝',html:'🌐',css:'🎨',yaml:'⚙',yml:'⚙',sh:'🔧'}[ext] || '📄';
+    }
+
+    // ── Editor ──
+    async function openFile(path) {
+        if (!monacoReady) { setTimeout(() => openFile(path), 200); return; }
+        let tab = openTabs.find(t => t.path === path);
+        if (!tab) {
+            try {
+                const resp = await fetch(`${API}/api/workspace/file?path=${encodeURIComponent(path)}`);
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const uri = monaco.Uri.parse('file:///' + path.replace(/\\/g, '/'));
+                let model = monaco.editor.getModel(uri);
+                if (model) model.setValue(data.content);
+                else model = monaco.editor.createModel(data.content, data.language, uri);
+                tab = { path, model, modified: false };
+                openTabs.push(tab);
+            } catch(e) { return; }
+        }
+        activateTab(tab);
+    }
+
+    function activateTab(tab) {
+        activeTab = tab;
+        const container = document.getElementById('editor-container');
+        const welcome = document.getElementById('welcome');
+        if (welcome) welcome.style.display = 'none';
+        if (!editor) {
+            editor = monaco.editor.create(container, {
+                theme: 'agent-dark', fontSize: 13,
+                fontFamily: "'Cascadia Code','Fira Code','Consolas',monospace",
+                minimap: { enabled: true }, scrollBeyondLastLine: false,
+                readOnly: false, automaticLayout: true, padding: { top: 8 },
+            });
+        }
+        editor.setModel(tab.model);
+        renderTabs();
+    }
+
+    function closeTab(path, e) {
+        e?.stopPropagation();
+        const idx = openTabs.findIndex(t => t.path === path);
+        if (idx === -1) return;
+        openTabs[idx].model?.dispose();
+        openTabs.splice(idx, 1);
+        if (activeTab?.path === path) {
+            if (openTabs.length) activateTab(openTabs[Math.min(idx, openTabs.length - 1)]);
+            else { activeTab = null; if (editor) { editor.dispose(); editor = null; } showWelcome(); }
+        }
+        renderTabs();
+    }
+
+    function showWelcome() {
+        const container = document.getElementById('editor-container');
+        container.innerHTML = '<div id="welcome"><h2>Coding Agent IDE</h2><p>Open a workspace or ask the agent to create files</p></div>';
+    }
+
+    function renderTabs() {
+        const el = document.getElementById('tabs');
+        el.innerHTML = '';
+        for (const tab of openTabs) {
+            const name = tab.path.split('/').pop();
+            const div = document.createElement('div');
+            div.className = 'tab' + (activeTab?.path === tab.path ? ' active' : '');
+            div.innerHTML = `${fileIcon(name)} ${name}${tab.modified ? '<span class="modified">●</span>' : ''}<span class="close" onclick="closeTab('${tab.path.replace(/'/g, "\\'")}', event)">×</span>`;
+            div.onclick = () => activateTab(tab);
+            el.appendChild(div);
+        }
+    }
+
+    // ── Chat ──
+    const messagesDiv = document.getElementById('messages');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    inputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+
+    function setStatus(t) { document.getElementById('status').textContent = t; }
+
+    function addMsg(role, html) {
+        const div = document.createElement('div');
+        div.className = `msg ${role}`;
+        if (role === 'assistant') div.innerHTML = html; else div.textContent = html;
+        messagesDiv.appendChild(div);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        return div;
+    }
+
+    let toolGroup = null;  // Current group of tool chips
+
+    function getOrCreateToolGroup() {
+        if (!toolGroup || toolGroup.nextElementSibling) {
+            toolGroup = document.createElement('div');
+            toolGroup.className = 'tool-calls-group';
+            messagesDiv.appendChild(toolGroup);
+        }
+        return toolGroup;
+    }
+
+    function addToolChip(name, input) {
+        const isWrite = ['file_write','file_edit','git_commit'].includes(name);
+        const chip = document.createElement('div');
+        chip.className = 'tool-chip executing' + (isWrite ? ' write-tool' : '');
+        chip.dataset.tool = name;
+        const detail = input?.path || input?.query || input?.message || '';
+        chip.innerHTML = `<span class="tool-spinner"></span><span class="tool-status">✓</span> ${isWrite ? '📝' : '🔍'} ${name}${detail ? ': ' + detail : ''}`;
+        if (input?.path) chip.onclick = () => openFile(input.path);
+        getOrCreateToolGroup().appendChild(chip);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        return chip;
+    }
+
+    function completeLastToolChip() {
+        const group = toolGroup;
+        if (!group) return;
+        const chips = group.querySelectorAll('.tool-chip.executing');
+        const last = chips[chips.length - 1];
+        if (last) {
+            last.classList.remove('executing');
+            last.classList.add('completed');
+        }
+    }
+
+    async function sendMessage() {
+        const text = inputEl.value.trim();
+        if (!text) return;
+        inputEl.value = '';
+        sendBtn.disabled = true;
+        setStatus('Thinking...');
+        addMsg('user', text);
+        let raw = '';
+        const aDiv = addMsg('assistant', '<span style="color:#858585">Thinking...</span>');
+
+        try {
+            const resp = await authFetch(`${API}/v1/chat/completions`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ model: 'coding-agent', messages: [{role:'user', content: text}], stream: true, session_id: sessionId }),
+            });
+            if (resp.status === 401) {
+                handleLogout();
+                return;
+            }
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+            let currentEvent = '';
+
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, {stream: true});
+                const lines = buf.split('\n');
+                buf = lines.pop() || '';
+
+                for (const line of lines) {
+                    const t = line.trim();
+
+                    // Handle named SSE events (event: tool_start / tool_end)
+                    if (t.startsWith('event:')) {
+                        currentEvent = t.slice(6).trim();
+                        continue;
+                    }
+
+                    if (!t.startsWith('data:')) { currentEvent = ''; continue; }
+                    const d = t.slice(5).trim();
+                    if (d === '[DONE]') continue;
+
+                    // Named tool events (modern path)
+                    if (currentEvent === 'tool_start' || currentEvent === 'tool_end') {
+                        try {
+                            const ev = JSON.parse(d);
+                            if (currentEvent === 'tool_start') {
+                                addToolChip(ev.tool, ev);
+                                setStatus('🔧 ' + ev.tool);
+                            } else {
+                                completeLastToolChip();
+                                setStatus('Thinking...');
+                                if (['file_write','file_edit'].includes(ev.tool)) {
+                                    setTimeout(() => { refreshTree(); reloadFile(ev.input?.path); }, 300);
+                                }
+                            }
+                        } catch(e) {}
+                        currentEvent = '';
+                        continue;
+                    }
+                    currentEvent = '';
+                    try {
+                        const j = JSON.parse(d);
+                        const c = j.choices?.[0]?.delta?.content || '';
+                        if (!c) continue;
+
+                        // Structured tool events
+                        const m = c.match(/<!-- TOOL:({.*?}) -->/);
+                        if (m) {
+                            try {
+                                const ev = JSON.parse(m[1]);
+                                if (ev.action === 'start') { addToolChip(ev.tool, ev.input); setStatus('🔧 ' + ev.tool); }
+                                else if (ev.action === 'end') {
+                                    completeLastToolChip();
+                                    setStatus('Thinking...');
+                                    if (['file_write','file_edit'].includes(ev.tool)) {
+                                        setTimeout(() => { refreshTree(); reloadFile(ev.input?.path); }, 300);
+                                    }
+                                }
+                            } catch(e) {}
+                            const clean = c.replace(/<!-- TOOL:.*? -->\n?/g, '').replace(/^🔧.*\n?/, '').trim();
+                            if (clean) raw += clean;
+                        } else {
+                            // Once text arrives, end the tool group so next tools get a new group
+                            if (c.trim()) toolGroup = null;
+                            // Strip tool-narration lines the model produces
+                            const cleaned = c.replace(/^🔧 Using \w+\.\.\.\s*/gm, '')
+                                             .replace(/^(?:Let me |I'll |I will |Let's |I have |Next,? I |Based on |To understand |I searched |I need to |Given that |Since ).*\n?/gim, '')
+                                             .replace(/^The (?:file|directory|search|next step|key files|position).*(?:I will|let me|next).*\n?/gim, '');
+                            raw += cleaned;
+                        }
+                        if (raw) {
+                            aDiv.innerHTML = marked.parse(raw);
+                            aDiv.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b));
+                        }
+                    } catch(e) {}
+                }
+            }
+        } catch(err) { aDiv.innerHTML = `<span style="color:#f44">❌ ${err.message}</span>`; }
+        if (!raw.trim()) aDiv.innerHTML = '<span style="color:#858585">(no response)</span>';
+        // Mark any remaining executing chips as completed
+        if (toolGroup) toolGroup.querySelectorAll('.tool-chip.executing').forEach(c => { c.classList.remove('executing'); c.classList.add('completed'); });
+        toolGroup = null;
+        sendBtn.disabled = false;
+        setStatus('Ready');
+    }
+
+    async function reloadFile(path) {
+        if (!path) return;
+        const tab = openTabs.find(t => t.path === path);
+        if (!tab) { openFile(path); return; }
+        try {
+            const resp = await fetch(`${API}/api/workspace/file?path=${encodeURIComponent(path)}`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            tab.model.setValue(data.content);
+            tab.modified = true; renderTabs();
+            setTimeout(() => { tab.modified = false; renderTabs(); }, 3000);
+        } catch(e) {}
+    }
+
+    // Resize
+    const rh = document.getElementById('resize-handle');
+    const bp = document.getElementById('bottom-panel');
+    let resizing = false;
+    rh.addEventListener('mousedown', e => { resizing = true; e.preventDefault(); });
+    document.addEventListener('mousemove', e => { if (!resizing) return; const h = window.innerHeight - e.clientY; if (h > 100 && h < window.innerHeight - 200) { bp.style.height = h + 'px'; editor?.layout(); } });
+    document.addEventListener('mouseup', () => resizing = false);
+
+    // Init
+    marked.setOptions({ breaks: true, gfm: true });
+    loadCurrentWorkspace();
+    document.getElementById('workspace-path').addEventListener('keydown', e => { if (e.key === 'Enter') openWorkspace(); });
+    </script>
+</body>
+</html>

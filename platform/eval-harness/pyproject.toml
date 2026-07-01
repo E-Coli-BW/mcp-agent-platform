@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-eval-harness"
+version = "0.1.0"
+description = "Offline quality eval for the MCP agent. Pytest + golden YAML + composable scorers."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "rich>=13.7",                 # pretty terminal reports
+]
+
+[project.optional-dependencies]
+# LLM-judge scorer needs OpenAI-compatible client; kept optional so the
+# core harness runs without paid API keys.
+llm-judge = ["openai>=1.30"]
+
+[project.scripts]
+eval-run        = "eval.runner:cli"
+eval-report     = "eval.report:cli"
+eval-gate       = "ci.eval_gate:cli"
+eval-suite-bfcl = "suites.bfcl:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["eval*", "ci*", "suites*"]
+exclude = ["tests*", "golden*", "runs*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "live: requires the agent stack to be up (skipped in CI without it)",
+]

@@ -1,0 +1,51 @@
+# Deployment configuration — switch between local and cloud environments.
+# Set AGENT_DEPLOY_PROFILE=cloud or AGENT_DEPLOY_PROFILE=local (default)
+# or override individual service URLs via environment variables.
+
+profiles:
+  local:
+    services:
+      memory_server_url: "http://localhost:8180"
+      filesearch_server_url: "http://localhost:8280"
+      codeexec_server_url: "http://localhost:8380"
+      auth_service_url: "http://localhost:8090"
+      redis_url: "redis://localhost:6379/0"
+      kafka_bootstrap_servers: "localhost:9093"
+      ollama_base_url: "http://localhost:11434"
+      mlx_base_url: "http://localhost:8600"
+    options:
+      graceful_degradation: true
+      health_check_interval: 60
+
+  cloud:
+    services:
+      memory_server_url: "${CLOUD_MEMORY_URL:https://memory.mcp-platform.example.com}"
+      filesearch_server_url: "${CLOUD_FILESEARCH_URL:https://filesearch.mcp-platform.example.com}"
+      codeexec_server_url: "${CLOUD_CODEEXEC_URL:https://codeexec.mcp-platform.example.com}"
+      auth_service_url: "${CLOUD_AUTH_URL:https://auth.mcp-platform.example.com}"
+      redis_url: "${CLOUD_REDIS_URL:rediss://redis.mcp-platform.example.com:6380/0}"
+      kafka_bootstrap_servers: "${CLOUD_KAFKA_SERVERS:kafka.mcp-platform.example.com:9092}"
+      ollama_base_url: "${CLOUD_LLM_URL:https://llm.mcp-platform.example.com}"
+      # Jira integration (set env vars to enable)
+      ticket_backend: "jira"
+      jira_url: "${AGENT_JIRA_URL:}"
+      jira_email: "${AGENT_JIRA_EMAIL:}"
+      jira_token: "${AGENT_JIRA_TOKEN:}"
+      jira_project: "${AGENT_JIRA_PROJECT:OPS}"
+    options:
+      graceful_degradation: false
+      health_check_interval: 30
+
+  hybrid:
+    # Run agent + LLM locally, connect to cloud backends
+    services:
+      memory_server_url: "${CLOUD_MEMORY_URL:https://memory.mcp-platform.example.com}"
+      filesearch_server_url: "http://localhost:8280"
+      codeexec_server_url: "http://localhost:8380"
+      auth_service_url: "${CLOUD_AUTH_URL:https://auth.mcp-platform.example.com}"
+      redis_url: "redis://localhost:6379/0"
+      kafka_bootstrap_servers: "localhost:9093"
+      ollama_base_url: "http://localhost:11434"
+    options:
+      graceful_degradation: true
+      health_check_interval: 60

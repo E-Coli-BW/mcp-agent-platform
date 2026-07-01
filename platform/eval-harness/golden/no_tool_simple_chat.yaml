@@ -1,0 +1,17 @@
+id: no_tool_simple_chat
+description: |
+  Trivial chat that should NOT use any tool. Catches "agent invokes tools
+  even when not needed" regressions (we saw this with memory_search being
+  called for free-form greetings during the strict-tools rollout).
+tags: [smoke, hygiene]
+
+prompt: |
+  Reply with the single word: pong
+
+expected:
+  # Empty tools_called + a small tools_called_max == "shouldn't call any"
+  tools_called_max: 0
+  tools_forbidden: [memory_search, memory_set, code_run, code_shell]
+  final_must_contain: ["pong"]
+  max_completion_tokens: 50          # answer is one word; budget catches verbosity regressions
+  max_latency_ms: 15000

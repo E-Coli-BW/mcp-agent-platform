@@ -1,0 +1,391 @@
+tasks:
+- sha: 73f4f0f
+  parent_sha: 49b1c8a
+  commit_msg: 'fix(agent-server): add streaming=False to MLX ChatOpenAI model'
+  files:
+  - platform/agent-server/agents/llm_factory.py
+  level: L1
+  has_test: false
+  need_description: 'We hit a problem: add streaming=False to MLX ChatOpenAI model. Please help me locate and fix it.'
+  description_quality: needs_review
+  tags:
+  - agent-server
+  - llm-config
+- sha: 16f41a3
+  parent_sha: 12cf4bf
+  commit_msg: 'fix(agent): skip hallucination guard after real tool results'
+  files:
+  - platform/agent-server/agents/graph_v2.py
+  level: L1
+  has_test: false
+  need_description: 'We hit a problem: skip hallucination guard after real tool results. Please help me locate and fix it.'
+  description_quality: ok
+  tags:
+  - agent-server
+  - hallucination
+  - flagship-case
+  notes: ★ This is the original commit of the hallucination loop. If arm A can reproduce the fix but arm C can't, it directly proves the value of the engineering enhancements.
+- sha: f94837f
+  parent_sha: e715516
+  commit_msg: 'fix(agent-server): improve system prompt for file navigation strategy'
+  files:
+  - platform/agent-server/agents/prompts.py
+  level: L1
+  has_test: false
+  need_description: 'We hit a problem: improve system prompt for file navigation strategy. Please help me locate and fix it.'
+  description_quality: ok
+  tags:
+  - agent-server
+  - prompt
+- sha: 4308a60
+  parent_sha: ''
+  commit_msg: 'fix(agent-server): raise LangGraph recursion_limit so v2 max_steps fires first'
+  files:
+  - platform/agent-server/agents/graph_v2.py
+  level: L1
+  has_test: false
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - agent-server
+  - loop-limit
+- sha: 12cf4bf
+  parent_sha: ''
+  commit_msg: 'fix(agent-server): reduce tool narration in responses + stronger prompt rules'
+  files:
+  - platform/agent-server/agents/prompts.py
+  - platform/agent-server/agents/graph_v2.py
+  level: L1
+  has_test: false
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - agent-server
+  - prompt
+- sha: 805db18
+  parent_sha: ''
+  commit_msg: 'fix(security): H7 — path traversal protection + atomic writes'
+  files:
+  - platform/filesearch-server/.../FileSearchService.java
+  level: L1
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - filesearch
+  - security
+  - has-test
+- sha: 4faf309
+  parent_sha: ''
+  commit_msg: 'fix(ci): add tree-sitter-python dep and install rag extras in CI'
+  files:
+  - .github/workflows/ci.yml
+  - platform/agent-server/pyproject.toml
+  level: L1
+  has_test: false
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - ci
+  - deps
+  notes: ⚠️ borderline — env-coupled. Drop it if it's too hard to reproduce in CI.
+- sha: c2c4c94
+  parent_sha: ''
+  commit_msg: 'fix(ci): fix two CI failures'
+  files:
+  - .github/workflows/ci.yml
+  level: L1
+  has_test: false
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - ci
+  notes: ⚠️ The commit message is too vague; the LLM back-translation may come out very generic — description_quality will most likely be needs_review.
+- sha: 0ac577a
+  parent_sha: ''
+  commit_msg: 'feat(agent-server): hallucination guard for tool-use verification + switch to graph v2'
+  files:
+  - platform/agent-server/agents/graph_v2.py
+  - platform/agent-server/agents/hallucination_guard.py
+  - platform/agent-server/agents/prompts.py
+  level: L2
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - agent-server
+  - hallucination
+  - flagship-feat
+  - has-test
+  notes: ★ A complete hallucination guard feature. arm A should be able to devise a similar approach; arm C most likely can't — a high-signal case.
+- sha: 79b8d00
+  parent_sha: ''
+  commit_msg: 'fix(filesearch-server): resolve Jackson DatatypeFeature + add ToolBridgeController REST endpoints'
+  files:
+  - platform/filesearch-server/.../JacksonConfig.java
+  - platform/filesearch-server/.../ToolBridgeController.java
+  - platform/filesearch-server/pom.xml
+  level: L2
+  has_test: false
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - filesearch
+  - jackson
+  - rest-api
+- sha: 5914cc3
+  parent_sha: ''
+  commit_msg: 'fix(agent): proxy /auth/* to auth-service so embedded UI signup works'
+  files:
+  - platform/agent-server/agents/main.py
+  - platform/agent-server/agents/auth_proxy.py
+  - platform/agent-server/static/index.html
+  level: L2
+  has_test: false
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - agent-server
+  - auth
+  - proxy
+- sha: cdc3ca2
+  parent_sha: ''
+  commit_msg: 'fix(auth): split login failure modes into distinct exceptions + log username on every failure'
+  files:
+  - platform/auth-service/.../UserService.java
+  - platform/auth-service/.../AuthExceptions.java
+  - platform/auth-service/.../AuthController.java
+  - platform/auth-service/.../UserServiceTest.java
+  level: L2
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - auth
+  - exception-design
+  - has-test
+- sha: dd19e9c
+  parent_sha: ''
+  commit_msg: 'feat(subagent): verbatim-quoting clause in child prompt only (P1 #2)'
+  files:
+  - platform/agent-server/agents/subagent_prompts.py
+  - platform/agent-server/agents/subagent.py
+  - platform/agent-server/tests/test_subagent.py
+  level: L2
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - subagent
+  - prompt
+  - has-test
+- sha: a741179
+  parent_sha: ''
+  commit_msg: 'refactor(auth): Phase 3 — externalize token TTL + Alibaba compliance'
+  files:
+  - platform/auth-service/.../JwtConfig.java
+  - platform/auth-service/.../TokenService.java
+  - platform/auth-service/src/main/resources/application.yml
+  - platform/auth-service/.../TokenServiceTest.java
+  level: L2
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - auth
+  - config-externalize
+  - has-test
+- sha: 89b3603
+  parent_sha: ''
+  commit_msg: 'fix(security): C4 — reject cross-tenant token minting without explicit policy'
+  files:
+  - platform/auth-service/.../TokenMintService.java
+  - platform/auth-service/.../PolicyService.java
+  - platform/auth-service/.../TokenMintController.java
+  - platform/auth-service/.../TokenMintServiceTest.java
+  level: L2
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - auth
+  - security
+  - multi-tenant
+  - has-test
+  notes: ⚠️ Rule 5 says auth/billing/migration are STOP-and-ask zones. This is a task, not a real prod change, but review it before placing it in L2.
+- sha: 036947c
+  parent_sha: ''
+  commit_msg: 'fix(security): C7 — per-tenant RAG retriever cache prevents cross-tenant data leakage'
+  files:
+  - platform/agent-server/agents/rag/retriever_cache.py
+  - platform/agent-server/agents/rag/retriever.py
+  - platform/agent-server/tests/test_retriever_cache.py
+  level: L2
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - rag
+  - security
+  - multi-tenant
+  - has-test
+- sha: 28acf52
+  parent_sha: ''
+  commit_msg: 'fix(security): C2-Java follow-up — preserve non-existent-file semantics'
+  files:
+  - platform/filesearch-server/.../FileSearchService.java
+  - platform/filesearch-server/.../PathSafetyGuard.java
+  - platform/filesearch-server/.../FileSearchServiceTest.java
+  level: L2
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - filesearch
+  - security
+  - has-test
+- sha: f57129b
+  parent_sha: ''
+  commit_msg: 'fix(security): C2-Java — reject symlink escape and unsafe path fallback'
+  files:
+  - platform/filesearch-server/.../PathSafetyGuard.java
+  - platform/filesearch-server/.../FileSearchService.java
+  - platform/filesearch-server/.../PathSafetyGuardTest.java
+  level: L2
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - filesearch
+  - security
+  - has-test
+- sha: 55b2fac
+  parent_sha: ''
+  commit_msg: 'fix(agent-server): Sprint 1 hardening — CORS whitelist, SSE heartbeat, atomic cache swap, JWT fail-fast, Redis
+    LRU fallback'
+  files:
+  - platform/agent-server/agents/main.py
+  - platform/agent-server/agents/cors.py
+  - platform/agent-server/agents/sse.py
+  - platform/agent-server/agents/cache.py
+  level: L3
+  has_test: false
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - agent-server
+  - hardening
+  - multi-concern
+  notes: ⚠️ multi-concern commit — Rule 3 says it should be split. But since it's already merged, it's a genuinely complex task; keep it at L3 to test whether the agent can handle it step by step.
+- sha: 4ed8016
+  parent_sha: ''
+  commit_msg: 'feat(agent-server): C3 subagent verifier (off-by-default, fail-open)'
+  files:
+  - platform/agent-server/agents/verifier.py
+  - platform/agent-server/agents/graph_v2.py
+  - platform/agent-server/agents/config.py
+  - platform/agent-server/tests/test_verifier.py
+  - platform/agent-server/tests/test_graph_verifier_integration.py
+  level: L3
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - agent-server
+  - verifier
+  - flagship-feat
+  - has-test
+  notes: ★ The verifier is one of the engineering enhancements. arm C turns the verifier off, so this case only tests whether arm A/B/D can implement a similar mechanism.
+- sha: 0f0ad6f
+  parent_sha: ''
+  commit_msg: 'feat(agent-server): C2 direct tool routing fast-path (off by default)'
+  files:
+  - platform/agent-server/agents/fast_path.py
+  - platform/agent-server/agents/graph_v2.py
+  - platform/agent-server/agents/config.py
+  - platform/agent-server/tests/test_fast_path.py
+  - platform/agent-server/tests/test_graph_fast_path.py
+  level: L3
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - agent-server
+  - fast-path
+  - has-test
+- sha: c91a3fd
+  parent_sha: ''
+  commit_msg: 'feat(agent-server): C1 reflexion / self-critique node (off by default)'
+  files:
+  - platform/agent-server/agents/reflexion.py
+  - platform/agent-server/agents/graph_v2.py
+  - platform/agent-server/agents/config.py
+  - platform/agent-server/tests/test_reflexion.py
+  - platform/agent-server/tests/test_graph_reflexion.py
+  level: L3
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - agent-server
+  - reflexion
+  - flagship-feat
+  - has-test
+- sha: aa22d50
+  parent_sha: ''
+  commit_msg: 'feat(agent): P1 #5 — stream child subagent events + cooperative cancel'
+  files:
+  - platform/agent-server/agents/subagent.py
+  - platform/agent-server/agents/sse.py
+  - platform/agent-server/agents/cancel.py
+  - platform/agent-server/tests/test_subagent_stream.py
+  - platform/agent-server/tests/test_cancel.py
+  level: L3
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - subagent
+  - streaming
+  - cancel
+  - has-test
+- sha: 6000895
+  parent_sha: ''
+  commit_msg: 'fix(security): C1-Java — per-tenant workspace isolation via WorkspaceResolver'
+  files:
+  - platform/filesearch-server/.../WorkspaceResolver.java
+  - platform/filesearch-server/.../FileSearchService.java
+  - platform/filesearch-server/.../TenantContext.java
+  - platform/filesearch-server/.../WorkspaceResolverTest.java
+  - platform/filesearch-server/.../FileSearchServiceTest.java
+  - platform/filesearch-server/src/main/resources/application.yml
+  level: L3
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - filesearch
+  - security
+  - multi-tenant
+  - has-test
+- sha: 0964098
+  parent_sha: ''
+  commit_msg: 'feat(eval): n-of-k flakiness tolerance + iteration report (P1 #2 follow-up c)'
+  files:
+  - platform/eval-harness/eval/runner.py
+  - platform/eval-harness/eval/case.py
+  - platform/eval-harness/eval/report.py
+  - platform/eval-harness/eval/scorers/n_of_k.py
+  - platform/eval-harness/tests/test_n_of_k.py
+  - platform/eval-harness/tests/test_report.py
+  - platform/eval-harness/README.md
+  level: L3
+  has_test: true
+  need_description: <TODO>
+  description_quality: pending
+  tags:
+  - eval-harness
+  - n-of-k
+  - meta
+  - has-test
+  notes: ⚠️ meta-task — the agent modifies the eval harness itself. It may create a strange feedback loop, but keep it as an L3 complexity sample.

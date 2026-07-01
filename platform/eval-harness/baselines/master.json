@@ -1,0 +1,121 @@
+{
+  "total": 3,
+  "passed": 3,
+  "failed": 0,
+  "pass_rate": 1.0,
+  "cases": [
+    {
+      "case_id": "code_run_basic",
+      "passed": true,
+      "scores": [
+        {
+          "name": "transport",
+          "passed": true,
+          "detail": "HTTP 200 in 12879ms",
+          "weight": 1.0
+        },
+        {
+          "name": "budgets",
+          "passed": true,
+          "detail": "latency 12879ms vs budget 30000ms",
+          "weight": 1.0
+        },
+        {
+          "name": "tool_selection",
+          "passed": true,
+          "detail": "observed tools={'code_run': 2}",
+          "weight": 1.0
+        },
+        {
+          "name": "answer_grounded",
+          "passed": true,
+          "detail": "all required substrings present (1)",
+          "weight": 1.0
+        }
+      ],
+      "latency_ms": 12879,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "tool_calls": [
+        "code_run",
+        "code_run"
+      ],
+      "error": null
+    },
+    {
+      "case_id": "memory_set_then_search",
+      "passed": true,
+      "scores": [
+        {
+          "name": "transport",
+          "passed": true,
+          "detail": "HTTP 200 in 2679ms",
+          "weight": 1.0
+        },
+        {
+          "name": "budgets",
+          "passed": true,
+          "detail": "latency 2679ms vs budget 60000ms",
+          "weight": 1.0
+        },
+        {
+          "name": "tool_selection",
+          "passed": true,
+          "detail": "observed tools={'memory_set': 2, 'memory_search': 2}",
+          "weight": 1.0
+        },
+        {
+          "name": "answer_grounded",
+          "passed": true,
+          "detail": "all required substrings present (1)",
+          "weight": 1.0
+        }
+      ],
+      "latency_ms": 2679,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "tool_calls": [
+        "memory_set",
+        "memory_search",
+        "memory_set",
+        "memory_search"
+      ],
+      "error": null
+    },
+    {
+      "case_id": "no_tool_simple_chat",
+      "passed": true,
+      "scores": [
+        {
+          "name": "transport",
+          "passed": true,
+          "detail": "HTTP 200 in 204ms",
+          "weight": 1.0
+        },
+        {
+          "name": "budgets",
+          "passed": true,
+          "detail": "latency 204ms vs budget 15000ms; completion 0 vs budget 50",
+          "weight": 1.0
+        },
+        {
+          "name": "tool_selection",
+          "passed": true,
+          "detail": "observed tools={}",
+          "weight": 1.0
+        },
+        {
+          "name": "answer_grounded",
+          "passed": true,
+          "detail": "all required substrings present (1)",
+          "weight": 1.0
+        }
+      ],
+      "latency_ms": 204,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "tool_calls": [],
+      "error": null
+    }
+  ]
+}

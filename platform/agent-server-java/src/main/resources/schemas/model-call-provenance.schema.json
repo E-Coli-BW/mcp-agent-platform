@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcp.local/schemas/model-call-provenance.schema.json",
+  "title": "ModelCallProvenance",
+  "type": "object",
+  "required": [
+    "event_id",
+    "run_id",
+    "request_id",
+    "tenant_id",
+    "session_id",
+    "runtime",
+    "call_site",
+    "provider",
+    "model",
+    "temperature",
+    "prompt_id",
+    "prompt_version",
+    "prompt_hash",
+    "feature_flags",
+    "prompt_tokens",
+    "completion_tokens",
+    "duration_ms",
+    "status",
+    "timestamp"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subagent_session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "runtime": {
+      "type": "string",
+      "enum": [
+        "python-v1",
+        "python-v2",
+        "java-loop",
+        "java-subagent",
+        "other"
+      ]
+    },
+    "call_site": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "temperature": {
+      "type": "number"
+    },
+    "max_tokens": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "route_decision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "prompt_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "prompt_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "prompt_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "feature_flags": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "boolean",
+          "string",
+          "number",
+          "null"
+        ]
+      }
+    },
+    "retrieval_mode": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "lexical",
+        "vector",
+        "hybrid",
+        null
+      ]
+    },
+    "tools_bound_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "prompt_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "completion_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fallback_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "error",
+        "timeout",
+        "cancelled"
+      ]
+    },
+    "error_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "error_message_redacted": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}
+

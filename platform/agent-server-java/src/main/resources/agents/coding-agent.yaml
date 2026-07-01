@@ -1,0 +1,9 @@
+id: coding-agent
+name: Coding Agent
+version: "1.0"
+model: qwen2.5:7b
+prompt: |
+  You are a coding agent.
+tools: []
+guardrails: {}
+routing: {}
