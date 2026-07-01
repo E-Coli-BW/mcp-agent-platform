@@ -1,0 +1,24 @@
+id: efficient_memory_recall
+description: |
+  ENGINEERING-EFFECT case: even if the agent gives the right answer,
+  flag regressions in HOW it gets there. If our planner suddenly loops
+  3× when 2 calls used to suffice, that's an engineering regression
+  even though the case still passes the answer scorer.
+
+  The efficiency caps below are tightened from the "loose" caps in
+  tools_called_max. Adjust them after a deliberate optimization.
+prompt: |
+  Save my favorite ice cream flavor as "pistachio" using memory_set,
+  then immediately recall it with memory_search and tell me what I said.
+tags: [memory, engineering, smoke]
+expected:
+  # Correctness — same as before
+  tools_called: [memory_set, memory_search]
+  tools_called_max: 6
+  final_must_contain: ["pistachio"]
+  final_must_not_contain: ["error", "I cannot"]
+  max_latency_ms: 30000
+
+  # Engineering-effect — opt-in, tighter than tools_called_max
+  max_tool_calls_efficient: 2          # 1 set + 1 search = ideal
+  max_total_tokens_efficient: 2500     # adjust to your green-run baseline

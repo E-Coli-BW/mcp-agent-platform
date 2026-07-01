@@ -1,0 +1,11 @@
+plugin:
+  id: example-tools
+  name: "Example Tool Pack"
+  version: "0.1.0"
+  author: "Platform Team"
+  language: python
+  tools:
+    - name: hello_world
+      module: example_tools.hello
+      description: "A simple hello world tool for testing the plugin system"
+      permissions: []

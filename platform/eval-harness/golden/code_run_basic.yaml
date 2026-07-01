@@ -1,0 +1,15 @@
+id: code_run_basic
+description: Agent uses code_run to evaluate `print(2+2)` and reports the output.
+tags: [smoke, codeexec]
+
+prompt: |
+  Call code_run with code=print(2+2) language=python timeout=5. Report only
+  the captured stdout in your answer.
+
+expected:
+  tools_called: [code_run]
+  tools_called_min: 1
+  tools_called_max: 3
+  final_must_contain: ["4"]
+  final_must_not_contain: ["error", "failed"]
+  max_latency_ms: 30000

@@ -1,0 +1,88 @@
+# Distributed Memory Store — Docker Compose
+# Launches: 2 memory-server nodes + Redis + Elasticsearch + Nacos
+#
+# Usage:
+#   docker compose -f docker-compose-distributed.yml up -d
+#   # memory-server-1 on :8180, memory-server-2 on :8181
+#   # Nacos console on :8848, Kibana-less ES on :9200, Redis on :6379
+
+version: '3.9'
+
+services:
+  # ── Redis Cluster (single node for dev) ──────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 3
+
+  # ── Elasticsearch ────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      retries: 5
+
+  # ── Nacos (service registry + config center) ─────────────
+  nacos:
+    image: nacos/nacos-server:v2.4.3
+    environment:
+      - MODE=standalone
+      - NACOS_AUTH_ENABLE=false
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
+      interval: 10s
+      retries: 5
+
+  # ── Memory Server Node 1 (Redis backend) ─────────────────
+  memory-server-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8180:8180"
+    environment:
+      - SERVER_PORT=8180
+      - MEMORYSTORE_BACKEND=redis
+      - MEMORYSTORE_DISCOVERY=nacos
+      - MEMORYSTORE_NACOS_SERVER_ADDR=nacos:8848
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
+  # ── Memory Server Node 2 (Redis backend, same cluster) ───
+  memory-server-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8181:8180"
+    environment:
+      - SERVER_PORT=8180
+      - MEMORYSTORE_BACKEND=redis
+      - MEMORYSTORE_DISCOVERY=nacos
+      - MEMORYSTORE_NACOS_SERVER_ADDR=nacos:8848
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy

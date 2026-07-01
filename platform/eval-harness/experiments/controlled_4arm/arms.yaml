@@ -1,0 +1,73 @@
+# 4-arm config for controlled experiment.
+#
+# Arm A vs C is the headline number (engineering enhancements vs bare model).
+# B/D give cost/ceiling context.
+
+arms:
+  - id: arm_a
+    label: "enhanced agent + 7B"
+    purpose: "full solution (all engineering enhancements on)"
+    model: qwen2.5:7b
+    backend: ollama   # ollama | openai | mlx
+    features:
+      hallucination_guard: true
+      reflexion: true
+      verifier: true
+      direct_tool_routing: true
+    sampling:
+      temperature: 0.2   # keep all arms in sync, eliminating sampling bias
+      top_p: 0.95
+      max_tokens: 4096
+
+  - id: arm_b
+    label: "enhanced agent + 0.5B"
+    purpose: "small model + engineering enhancements (cost-correctness tradeoff)"
+    model: qwen2.5:0.5b
+    backend: ollama
+    features:
+      hallucination_guard: true
+      reflexion: true
+      verifier: true
+      direct_tool_routing: true
+    sampling:
+      temperature: 0.2
+      top_p: 0.95
+      max_tokens: 4096
+
+  - id: arm_c
+    label: "bare 7B (control)"
+    purpose: "control group — all engineering enhancements off, leaving only the 7B model + basic tool calling"
+    model: qwen2.5:7b
+    backend: ollama
+    features:
+      hallucination_guard: false   # ← critical: turned off
+      reflexion: false             # ← critical: turned off
+      verifier: false              # ← critical: turned off
+      direct_tool_routing: false
+    sampling:
+      temperature: 0.2
+      top_p: 0.95
+      max_tokens: 4096
+
+  - id: arm_d
+    label: "GPT-4o ceiling"
+    purpose: "commercial ceiling reference (honest gap)"
+    model: gpt-4o
+    backend: openai
+    features:
+      hallucination_guard: false   # GPT-4o needs no extra guard
+      reflexion: false
+      verifier: false
+      direct_tool_routing: false
+    sampling:
+      temperature: 0.2
+      top_p: 0.95
+      max_tokens: 4096
+
+# Runtime knobs (shared across arms)
+runtime:
+  agent_url: "http://localhost:8580"   # python agent-server
+  trials_per_task: 5                   # n-of-k = 3/5 pass threshold
+  parallelism: 2                       # how many tasks in flight at once
+  timeout_seconds: 300                 # per single trial
+  retry_on_5xx: 2                      # transient infra hiccup retries

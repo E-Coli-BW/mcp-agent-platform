@@ -1,0 +1,15 @@
+id: memory_set_then_search
+description: Agent saves a value with memory_set, then retrieves it with memory_search.
+tags: [smoke, memory]
+
+prompt: |
+  Use memory_set to save key=favorite_color content=blue, then memory_search
+  for favorite_color and tell me the value.
+
+expected:
+  tools_called: [memory_set, memory_search]
+  tools_called_min: 2
+  tools_called_max: 6                # generous — model may retry
+  final_must_contain: ["blue"]
+  final_must_not_contain: ["I cannot", "unable to"]
+  max_latency_ms: 60000              # local Qwen on macOS is slow; generous

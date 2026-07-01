@@ -1,0 +1,187 @@
+# Context Compression Eval Scenarios
+#
+# These scenarios test the agent's ability to retain critical information
+# after context window compression fires during long multi-turn sessions.
+#
+# Run: cd platform/eval-harness && python run_eval.py --suite context_compression
+
+scenarios:
+  # ── Scenario 1: Debug Needle ──────────────────────────────────────
+  - name: debug_needle
+    description: |
+      30-turn debug session where a critical clue appears at turn 5
+      (specific line number in a stack trace). Turns 6-25 are noise
+      (wrong paths, irrelevant exploration). At turn 26, ask the agent
+      to recall the clue from turn 5.
+    setup:
+      turns: 30
+      needle_turn: 5
+      needle_content: "NullPointerException at UserService.java:142"
+      noise_turns: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+      compression_trigger_turn: 22  # force compression here
+      query_turn: 26
+      query: "What was the exact line number from the stack trace you saw earlier?"
+      expected_answer_contains: ["142", "UserService"]
+    metrics:
+      - name: fact_recall
+        type: contains_check
+        description: "Can the agent recall the needle after compression?"
+        pass_threshold: 1.0  # must recall exactly
+      - name: compression_ratio
+        type: ratio
+        description: "tokens_after / tokens_before"
+        alert_if_below: 0.3
+        alert_if_above: 0.9
+
+  # ── Scenario 2: Skill Recovery ────────────────────────────────────
+  - name: skill_recovery
+    description: |
+      Agent uses a skill during the session (maven-stale-jar-fix).
+      Session compresses, removing the full skill body.
+      Later turn requires re-applying a variation of the same skill.
+      Agent must know to call skill_get() to recover the full steps.
+    setup:
+      skill_key: "maven-stale-jar-fix"
+      skill_used_at_turn: 8
+      compression_trigger_turn: 15
+      reuse_query_turn: 18
+      reuse_query: "I'm getting the same ClassNotFoundException again but in auth-service this time"
+      expected_behavior:
+        - "calls skill_get(key='maven-stale-jar-fix')"
+        - "adapts steps for auth-service instead of memory-server"
+    metrics:
+      - name: skill_reuse_accuracy
+        type: behavior_check
+        description: "Does agent recover and adapt the skill?"
+        pass_threshold: 0.8
+      - name: token_savings
+        type: ratio
+        description: "Tokens saved by compressing skill body to reference"
+
+  # ── Scenario 3: Hypothesis Chain ──────────────────────────────────
+  - name: hypothesis_chain
+    description: |
+      Agent eliminates 5 hypotheses over 20 turns:
+        H1: "config file missing" — eliminated (file exists)
+        H2: "wrong port" — eliminated (port is correct)
+        H3: "auth token expired" — eliminated (token is fresh)
+        H4: "race condition" — eliminated (single-threaded test)
+        H5: "null injection" — CONFIRMED (the actual root cause)
+      Compression fires at turn 18.
+      At turn 22, ask "what have we already ruled out?"
+      Agent must list all 4 eliminated hypotheses without re-investigating them.
+    setup:
+      hypotheses:
+        - turn: 3
+          hypothesis: "config file missing"
+          eliminated_because: "ls shows config.yaml exists"
+        - turn: 6
+          hypothesis: "wrong port"
+          eliminated_because: "curl localhost:8080 returns 200"
+        - turn: 9
+          hypothesis: "auth token expired"
+          eliminated_because: "jwt decode shows exp is tomorrow"
+        - turn: 12
+          hypothesis: "race condition"
+          eliminated_because: "reproduces in single-threaded test"
+        - turn: 15
+          hypothesis: "null injection"
+          confirmed: true
+      compression_trigger_turn: 18
+      query_turn: 22
+      query: "What hypotheses have we already ruled out and why?"
+      expected_answer_contains: ["config", "port", "auth", "race"]
+    metrics:
+      - name: reasoning_chain_integrity
+        type: contains_check
+        description: "Does agent remember all eliminated hypotheses?"
+        pass_threshold: 0.75  # must recall at least 3/4
+      - name: redundant_rework
+        type: negative_check
+        description: "Does agent try to re-investigate an already-eliminated hypothesis?"
+        expected: 0
+
+  # ── Scenario 4: Multi-File Debug ──────────────────────────────────
+  - name: multi_file_debug
+    description: |
+      Fix spans 4 files discovered progressively:
+        Turn 3: Controller.java (entry point)
+        Turn 7: Service.java (business logic bug)
+        Turn 11: Repository.java (wrong query)
+        Turn 14: Migration.sql (missing column)
+      Compression fires at turn 16.
+      At turn 18: "Apply the fix to all affected files"
+      Agent must remember ALL 4 files without re-discovering them.
+    setup:
+      files:
+        - turn: 3
+          path: "src/main/java/com/example/Controller.java"
+          issue: "wrong status code returned"
+        - turn: 7
+          path: "src/main/java/com/example/Service.java"
+          issue: "null check missing before .getId()"
+        - turn: 11
+          path: "src/main/java/com/example/Repository.java"
+          issue: "findByEmail should be findByUsername"
+        - turn: 14
+          path: "src/main/resources/db/migration/V3__add_column.sql"
+          issue: "missing NOT NULL constraint"
+      compression_trigger_turn: 16
+      query_turn: 18
+      query: "Now apply fixes to all the files we identified"
+      expected_files_recalled: 4
+    metrics:
+      - name: file_coverage
+        type: count_check
+        description: "How many of the 4 files does the agent remember?"
+        pass_threshold: 4
+      - name: partial_fix_rate
+        type: ratio
+        description: "Files correctly fixed / files that needed fixing"
+        pass_threshold: 0.75
+
+# ── Baselines ─────────────────────────────────────────────────────────
+# Compare against:
+baselines:
+  - name: naive_truncation
+    strategy: "Drop oldest messages when over budget"
+    expected_fact_recall: 0.40
+    expected_redundant_rework: 0.60
+
+  - name: llm_summary
+    strategy: "Ask LLM to summarize dropped turns"
+    expected_fact_recall: 0.75
+    expected_redundant_rework: 0.20
+
+  - name: structured_extraction
+    strategy: "InvestigationState + tiered compression (our approach)"
+    expected_fact_recall: 0.90
+    expected_redundant_rework: 0.05
+
+  - name: skill_ref_compression
+    strategy: "Skill bodies → references (recoverable via skill_get)"
+    expected_fact_recall: 0.95
+    expected_redundant_rework: 0.02
+    note: "Only applicable to skill-heavy sessions"
+
+# ── Public Benchmark References ───────────────────────────────────────
+references:
+  - name: LOCOMO
+    paper: "Long-Conversation Memory (Stanford, 2024)"
+    relevance: "Tests memory retrieval over 600+ turn dialogues"
+    url: "https://arxiv.org/abs/2402.17753"
+
+  - name: TAU-bench
+    paper: "Tool-Agent-User Benchmark (Sierra, 2024)"
+    relevance: "Multi-turn tool-use conversations (5-30 tool calls)"
+    url: "https://arxiv.org/abs/2406.12045"
+
+  - name: SWE-bench
+    paper: "Software Engineering Benchmark (Princeton, 2024)"
+    relevance: "End-to-end code debugging — long sessions stress context"
+    url: "https://arxiv.org/abs/2310.06770"
+
+  - name: InfiniteBench
+    paper: "∞Bench (2024)"
+    relevance: "100K+ token needle-in-haystack retrieval"
+    url: "https://arxiv.org/abs/2402.13718"

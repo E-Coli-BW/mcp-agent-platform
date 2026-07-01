@@ -1,0 +1,40 @@
+server:
+  port: 8500
+
+agent:
+  default-model: mlx/Qwen2.5-0.5B-Instruct-4bit
+  strong-model: qwen2.5:7b
+  cheap-model: mlx/Qwen2.5-0.5B-Instruct-4bit
+  prompt-version: v2
+  prompt-tenant-versions-json: ${AGENT_PROMPT_TENANT_VERSIONS_JSON:{}}
+  prompt-canary-enabled: ${AGENT_PROMPT_CANARY_ENABLED:false}
+  prompt-canary-percent: ${AGENT_PROMPT_CANARY_PERCENT:0}
+  prompt-canary-version: ${AGENT_PROMPT_CANARY_VERSION:}
+  prompt-canary-tenants: ${AGENT_PROMPT_CANARY_TENANTS:}
+  prompt-allow-request-override: ${AGENT_PROMPT_ALLOW_REQUEST_OVERRIDE:false}
+  config-dir: agents
+  max-tool-output: 3000
+  max-context-chars: 20000
+  max-agent-steps: 20
+  workspace: ${AGENT_WORKSPACE:}
+  jwt-secret: ${AGENT_JWT_SECRET:default-dev-secret-DO-NOT-USE-IN-PRODUCTION}
+  memory-server-url: http://localhost:8180
+  codeexec-server-url: http://localhost:8380
+  auth-service-url: http://localhost:8090
+  ollama-base-url: ${AGENT_OLLAMA_BASE_URL:http://localhost:11434}
+  openai-api-key: ${AGENT_OPENAI_API_KEY:}
+  anthropic-api-key: ${AGENT_ANTHROPIC_API_KEY:}
+
+spring:
+  ai:
+    ollama:
+      base-url: ${AGENT_OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${AGENT_DEFAULT_MODEL:qwen2.5:7b}
+          temperature: 0.7
+    openai:
+      api-key: ${AGENT_OPENAI_API_KEY:}
+  data:
+    redis:
+      url: ${AGENT_REDIS_URL:redis://localhost:6379/0}

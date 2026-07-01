@@ -1,0 +1,22 @@
+{
+  "name": "useful-mcp-tools",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "npx tsc",
+    "start": "node ./dist/index.js",
+    "dev": "vite",
+    "test": "echo \"No root test script. See platform/*/ for module tests.\""
+  },
+  "workspaces": [
+    "platform/*",
+    "src-legacy"
+  ],
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vite": "^4.0.0"
+  },
+  "dependencies": {
+    "@types/node": "^20.0.0"
+  }
+}

@@ -1,0 +1,93 @@
+id: subagent_parallel_file_summary
+description: |
+  ENGINEERING-EFFECT case for the subagent fleet feature.
+
+  v5 (replaces v4 strict-verbatim):
+
+    v1 — README content; both passed from memory → ⚠ no-lift
+    v2 — single-file constants; Qwen narrowed read window then hallucinated
+         "file not found" → -lift
+    v3 — 3 files, identifier at line 251 of 411 — outside default file_read
+         window. Surfaced two ops bugs (workspace not pointed at repo;
+         JWT expired). → -lift
+    v4 — moved all identifiers into the first 100 lines AND added the
+         "release notes" framing to give Qwen a natural reason to quote
+         verbatim. Agent SUCCESSFULLY used spawn_subagent (the new
+         primitive) and read all 3 files — major engineering win!
+         But the child agent paraphrased identifiers in its summary
+         ("MAX_SUBAGENT_NESTING_DEPTH" instead of "MAX_DEPTH_CEILING";
+         "SpawnResultEnvelope" instead of "SubagentResult"). This is
+         the telephone-effect documented in subagent_context.py itself.
+    v5 — measures what we CAN measure with a 7B model: the AGENT path
+         demonstrably (a) calls a real tool, and (b) recovers the ONE
+         identifier that survives child-summary paraphrasing because
+         it's a literal English phrase the child can copy ("embarrassingly
+         parallel"). The bare LLM cannot — it hallucinates plausible
+         workload phrases like "small and frequent" or "high-throughput".
+
+  This is a less-strict but ACTUAL +lift signal. Verbatim-class-name
+  capture is now a separate concern handled by tightening the subagent
+  child system prompt (planned P1 #2 follow-up).
+
+prompt: |
+  I'm writing release notes for a new "subagent fleet" feature and need
+  to describe the IDEAL WORKLOAD for the spawn_subagent function.
+
+  The exact phrase I want is verbatim from the spawn_subagent docstring
+  in platform/agent-server/app/tools/subagent_tool.py — it appears in
+  the "Use this for ..." section, in bold (between ** markers).
+
+  Read that file (it's short — about 100 lines, read it in full) and
+  quote the exact two-word phrase the docstring uses. Optional but
+  helpful: also peek at platform/agent-server/app/agent/subagent.py
+  and platform/agent-server/app/agent/subagent_context.py to add
+  brief context about what the feature does.
+
+  TIP: this is itself embarrassingly parallel — if you have a
+  spawn_subagent tool, fan out one child per file. Otherwise read
+  them sequentially.
+
+  Write a 1-2 sentence release-note draft. The EXACT TWO-WORD PHRASE
+  from the docstring MUST appear verbatim — it'll be quoted in the
+  release notes.
+
+tags: [subagent, engineering, lift, fleet, parallel]
+
+expected:
+  # Must touch at least one tool — proves the agent went looking
+  # instead of hallucinating from prior context.
+  tools_called_min: 1
+  tools_called_max: 12
+  final_must_contain:
+    # The one identifier robust to child-summary paraphrasing: it's a
+    # natural English phrase the child can copy, not a CamelCase name
+    # the child wants to "improve".
+    - "embarrassingly parallel"
+  final_must_not_contain:
+    - "cannot read"
+    - "don't have access"
+    - "I'm unable"
+    - "I do not have"
+    - "could not be located"
+    # Common Qwen baseline hallucinations — if any of these slip into
+    # the AGENT answer, the agent's pretraining is leaking through.
+    - "small and frequent"
+    - "high-throughput"
+    - "high throughput"
+  max_latency_ms: 90000
+
+  # ── n-of-k flakiness tolerance ────────────────────────────────
+  # Empirically at T=0.7 the case is 3/5 flaky (the temperature-plumbing
+  # bug — graph.py used to hardcode T=0.7 ignoring the eval-runner's
+  # `temperature: 0`). After the fix, the eval-runner's T=0 actually plumbs
+  # through and the case is 5/5 fully deterministic (identical output
+  # 332 chars every run). We could set min_pass_rate: 1.0 here, but
+  # leaving it at 0.8 gives one-run cushion against unrelated transient
+  # failures (network, cold-start, etc.). The CI gate keys off `passed`
+  # which is the n-of-k aggregate.
+  min_pass_rate: 0.8
+
+  # Bare Qwen2.5:7b CANNOT know the docstring phrase — that file landed
+  # in commit 3622c09 (2026). The agent reads it. Guaranteed +lift IF
+  # the agent finishes its read loop.
+  expects_agent_lift: true

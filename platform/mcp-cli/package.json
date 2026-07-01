@@ -1,0 +1,24 @@
+{
+  "name": "mcp-local-tools",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "start:memory": "node dist/memory-ts/memory-server.js",
+    "start:filesearch": "node dist/filesearch-ts/filesearch-server.js"
+  },
+  "keywords": ["mcp", "memory", "file-search"],
+  "author": "",
+  "license": "ISC",
+  "description": "Local MCP servers: Memory Store & File Search",
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  }
+}
