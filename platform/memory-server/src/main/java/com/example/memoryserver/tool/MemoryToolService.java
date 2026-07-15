@@ -54,7 +54,9 @@ public class MemoryToolService {
         String tid = TenantContext.get();
         return memoryService.get(tid, validatedKey)
                 .map(e -> toJson(MemoryResponse.from(e)))
-                .orElse("❌ Memory not found: \"" + validatedKey + "\"");
+                .orElse("❌ No memory found with key \"" + validatedKey + "\". "
+                        + "Next: call memory_search with a related query to find similar keys, "
+                        + "or memory_list to see all available keys before retrying.");
     }
 
     @Tool(description = "Search memories by keywords and/or tags. Returns ranked results.")
@@ -70,7 +72,10 @@ public class MemoryToolService {
 
         if (results.isEmpty()) {
             String ns = namespace != null ? " in namespace \"" + namespace + "\"" : "";
-            return "🔍 No memories found matching \"" + validatedQuery + "\"" + ns;
+            String tagHint = (tags != null && !tags.isEmpty())
+                    ? " Try removing the tag filter or" : " Try";
+            return "🔍 No memories found matching \"" + validatedQuery + "\"" + ns + "."
+                    + tagHint + " broadening the query, or call memory_list to browse all keys.";
         }
 
         var items = new ArrayList<Map<String, Object>>();
@@ -95,7 +100,9 @@ public class MemoryToolService {
         String validatedKey = requireNonBlank(key, "key");
         String tid = TenantContext.get();
         boolean deleted = memoryService.delete(tid, validatedKey);
-        return deleted ? "🗑️ Memory deleted: \"" + validatedKey + "\"" : "❌ Memory not found: \"" + validatedKey + "\"";
+        return deleted ? "🗑️ Memory deleted: \"" + validatedKey + "\""
+                : "❌ No memory found with key \"" + validatedKey + "\", nothing deleted. "
+                        + "Next: call memory_list to confirm the exact key before retrying.";
     }
 
     @Tool(description = "Pin or unpin a memory. Pinned memories are immune to forgetting.")
@@ -109,7 +116,9 @@ public class MemoryToolService {
                 .map(e -> pin
                         ? "📌 Memory pinned: \"" + validatedKey + "\" — will never be auto-forgotten"
                         : "📌 Memory unpinned: \"" + validatedKey + "\"")
-                .orElse("❌ Memory not found: \"" + validatedKey + "\"");
+                .orElse("❌ No memory found with key \"" + validatedKey + "\", nothing to "
+                        + (pin ? "pin" : "unpin") + ". "
+                        + "Next: call memory_list to confirm the exact key before retrying.");
     }
 
     @Tool(description = "List memories, optionally filtered by namespace or tags.")
@@ -121,7 +130,10 @@ public class MemoryToolService {
                 tags != null ? new HashSet<>(tags) : null);
 
         if (entries.isEmpty()) {
-            return "📭 No memories found.";
+            String ns = namespace != null ? " in namespace \"" + namespace + "\"" : "";
+            return "📭 No memories found" + ns + ". "
+                    + "This namespace is empty — use memory_set to create one, "
+                    + "or call memory_list without a namespace filter to see everything.";
         }
 
         var summary = entries.stream()
