@@ -122,7 +122,8 @@ def run_benchmark():
 
     # Load index
     if not retriever.is_indexed:
-        platform_idx = get_index_dir_for_workspace("repository-root")
+        platform_root = Path(__file__).resolve().parents[4]
+        platform_idx = get_index_dir_for_workspace(str(platform_root))
         if not retriever.load_from_disk(str(platform_idx)):
             if not retriever.load_from_disk(str(BASE_INDEX_DIR)):
                 print("❌ No index found. Run: python -m app.rag.index.indexer /path/to/project")

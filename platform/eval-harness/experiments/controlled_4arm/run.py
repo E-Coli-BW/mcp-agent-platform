@@ -64,7 +64,7 @@ TASKS_YAML = HERE / "tasks.yaml"
 
 # ── Git safety ────────────────────────────────────────────────────
 # Resolved at startup. Used to assert master ref never moves during a run.
-REPO_ROOT = HERE.parents[3]  # repository-root
+REPO_ROOT = HERE.parents[3]  # repository root
 MASTER_SHA_AT_STARTUP: str | None = None  # set in main()
 
 # Worktrees live here. /tmp survives reboots on macOS but gets nuked on
