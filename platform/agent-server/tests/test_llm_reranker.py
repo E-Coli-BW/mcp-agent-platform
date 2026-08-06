@@ -122,7 +122,7 @@ def patch_model(monkeypatch):
         import app.agent.graph as graph_mod
 
         # Mock signature must accept the new `temperature` kwarg that
-        # callers now pass through (temperature-plumbing fix). Defaults None for
+        # callers now pass through (latent bug D fix). Defaults None for
         # back-compat with any call site that doesn't supply it.
         monkeypatch.setattr(
             graph_mod,

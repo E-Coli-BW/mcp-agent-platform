@@ -1,8 +1,8 @@
 /**
  * Import tools: Copilot Sessions + Project Knowledge
- * Import tools: Copilot Sessions + Project Knowledge
+ * 导入工具: Copilot Sessions + 项目知识
  * (Extracted from the original monolithic memory-server.ts)
- * (extracted from the original monolithic memory-server.ts)
+ * (从原始单体 memory-server.ts 中提取)
  */
 
 import fs from "node:fs";
@@ -10,7 +10,7 @@ import path from "node:path";
 import os from "node:os";
 import type { MemoryStore, MemoryEntry } from "./types.js";
 
-// ─── Platform-aware VS Code storage path ───────────────────────────────────
+// ─── Platform-aware VS Code storage path / 跨平台 VS Code 存储路径 ──────────
 function getVSCodeStorageDir(): string {
   switch (process.platform) {
     case "win32":
@@ -23,7 +23,7 @@ function getVSCodeStorageDir(): string {
   }
 }
 
-// ─── Import Copilot Sessions ────────────────────────────────────────────────
+// ─── Import Copilot Sessions / 导入 Copilot 会话 ─────────────────────────────
 
 export function importCopilotSessions(
   store: MemoryStore,
@@ -37,7 +37,7 @@ export function importCopilotSessions(
   const sessionDir = path.join(copilotDir, "session-state");
   const configFile = path.join(copilotDir, "config.json");
 
-  // ── Global config ──
+  // ── Global config / 全局配置 ──
   if (fs.existsSync(configFile)) {
     try {
       const config = JSON.parse(fs.readFileSync(configFile, "utf-8"));
@@ -53,7 +53,7 @@ export function importCopilotSessions(
     } catch { /* ignore */ }
   }
 
-  // ── Command history ──
+  // ── Command history / 命令历史 ──
   const histFile = path.join(copilotDir, "command-history-state.json");
   if (fs.existsSync(histFile)) {
     try {
@@ -67,7 +67,7 @@ export function importCopilotSessions(
     } catch { /* ignore */ }
   }
 
-  // ── CLI sessions ──
+  // ── CLI sessions / CLI 会话 ──
   if (fs.existsSync(sessionDir)) {
     let sessionDirs: fs.Dirent[];
     try { sessionDirs = fs.readdirSync(sessionDir, { withFileTypes: true }); } catch { sessionDirs = []; }
@@ -122,7 +122,7 @@ export function importCopilotSessions(
     }
   }
 
-  // ── VS Code Chat sessions ──
+  // ── VS Code Chat sessions / VS Code Chat 会话 ──
   const vscodeStorageDir = getVSCodeStorageDir();
   if (fs.existsSync(vscodeStorageDir)) {
     let storageDirs: fs.Dirent[];
@@ -193,7 +193,7 @@ export function importCopilotSessions(
   return { imported, skipped };
 }
 
-// ─── Import Project Knowledge ───────────────────────────────────────────────
+// ─── Import Project Knowledge / 导入项目知识 ─────────────────────────────────
 
 export function importProjectKnowledge(
   store: MemoryStore,
@@ -275,7 +275,7 @@ export function importProjectKnowledge(
   return { imported, skipped };
 }
 
-// ─── Helper ─────────────────────────────────────────────────────────────────
+// ─── Helper / 辅助函数 ───────────────────────────────────────────────────────
 
 function makeEntry(
   key: string, content: string, tags: string[], namespace: string,

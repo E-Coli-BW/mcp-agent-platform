@@ -16,9 +16,11 @@ These tests verify:
 """
 
 import json
-import time
 import pytest
+import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
+from langchain_core.messages import AIMessage, ToolMessage
+from app.agent.graph_v2 import AgentState, make_error_tracking_node
 from app.tools.mcp_client import McpToolClient
 
 
@@ -55,6 +57,25 @@ class TestJwtGeneration:
         token2 = client._get_legacy_token()
 
         assert token1 == token2, "Same token should be returned within cache TTL"
+
+    def test_jwt_cache_is_isolated_by_tenant(self):
+        client = McpToolClient(
+            "http://localhost:8180",
+            jwt_secret="test-secret-32chars-long-enough!",
+            audience="memory-server",
+        )
+
+        tenant_a_first = client._get_legacy_token(tenant_id="tenant-a")
+        tenant_b = client._get_legacy_token(tenant_id="tenant-b")
+        tenant_a_second = client._get_legacy_token(tenant_id="tenant-a")
+
+        assert tenant_a_first == tenant_a_second
+        assert tenant_a_first != tenant_b
+        payload_b64 = tenant_b.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        import base64
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        assert payload["tenant_id"] == "tenant-b"
 
     def test_no_jwt_without_secret(self):
         client = McpToolClient("http://localhost:8180")  # no jwt_secret
@@ -128,6 +149,65 @@ class TestJwtAttachment:
             call_args = mock_http.post.call_args
             headers = call_args.kwargs.get("headers", {})
             assert "Authorization" not in headers
+
+
+class TestBackendErrorContract:
+    @pytest.mark.asyncio
+    async def test_http_failure_is_classified_by_graph_error_tracker(self):
+        client = McpToolClient("http://localhost:8180")
+        response = MagicMock(status_code=500)
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(return_value=response)
+        mock_http.is_closed = False
+        client._client = mock_http
+
+        with patch("app.tracing.get_tracer") as mock_tracer, patch(
+            "app.tracing.inject_trace_headers", side_effect=lambda headers: headers
+        ):
+            span = MagicMock()
+            span.__enter__ = MagicMock(return_value=span)
+            span.__exit__ = MagicMock(return_value=False)
+            mock_tracer.return_value.start_as_current_span.return_value = span
+            result = await client.call_tool("memory_context", {})
+
+        assert result.startswith("❌")
+        state = AgentState(
+            messages=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"id": "call-1", "name": "memory_context", "args": {}}
+                    ],
+                ),
+                ToolMessage(
+                    content=result,
+                    tool_call_id="call-1",
+                    name="memory_context",
+                ),
+            ]
+        )
+        assert make_error_tracking_node()(state)["consecutive_errors"] == 1
+
+    @pytest.mark.asyncio
+    async def test_connection_failure_uses_same_error_prefix(self):
+        client = McpToolClient("http://localhost:8180")
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(
+            side_effect=httpx.ConnectError("connection refused")
+        )
+        mock_http.is_closed = False
+        client._client = mock_http
+
+        with patch("app.tracing.get_tracer") as mock_tracer, patch(
+            "app.tracing.inject_trace_headers", side_effect=lambda headers: headers
+        ):
+            span = MagicMock()
+            span.__enter__ = MagicMock(return_value=span)
+            span.__exit__ = MagicMock(return_value=False)
+            mock_tracer.return_value.start_as_current_span.return_value = span
+            result = await client.call_tool("memory_context", {})
+
+        assert result.startswith("❌")
 
 
 class TestConnectionPooling:

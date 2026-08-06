@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     agent_config_dir: str = "agents"
     agent_graph_version: str = "v2"  # "v1" (create_react_agent) or "v2" (explicit StateGraph)
 
+    # Runtime persistence. Memory preserves the current local-dev behavior;
+    # sqlite enables process-restart recovery for run timelines.
+    runtime_store_backend: str = "memory"  # "memory" or "sqlite"
+    runtime_store_sqlite_path: str = ".runtime/agent-runtime.sqlite3"
+
     # ── RAG reranker strategy ──────────────────────────────────────────────
     # auto          → cross_encoder if available, else heuristic
     # llm           → use a small LLM listwise reranker (highest quality, ~500ms)

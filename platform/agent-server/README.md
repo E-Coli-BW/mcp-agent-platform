@@ -197,7 +197,9 @@ AGENT_RERANK_STRATEGY=llm
 FastAPI (OpenAI-compatible API) → http://localhost:8500
   ↓
 LangGraph ReAct Agent (PLAN → ACT → SUMMARIZE)
-  ↓ prompt modifier (context compression + workspace context + retry)
+  ↓ lossless checkpoint (raw messages + typed investigation state)
+  ↓ _build_llm_view (ephemeral compression + workspace/skills + hard budget)
+  ↓ tool authorization gate (allow / deny / approval before side effects)
   ↓ model routing (simple→cheap, complex→strong)
   ↓
 Tools (15) → Java MCP Backends (optional)

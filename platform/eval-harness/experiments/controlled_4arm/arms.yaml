@@ -1,12 +1,12 @@
 # 4-arm config for controlled experiment.
 #
-# Arm A vs C is the headline number (engineering enhancements vs bare model).
+# Arm A vs C is the headline number (your engineering vs bare model).
 # B/D give cost/ceiling context.
 
 arms:
   - id: arm_a
-    label: "enhanced agent + 7B"
-    purpose: "full solution (all engineering enhancements on)"
+    label: "你的 agent + 7B"
+    purpose: "你的完整方案 (主角)"
     model: qwen2.5:7b
     backend: ollama   # ollama | openai | mlx
     features:
@@ -15,13 +15,13 @@ arms:
       verifier: true
       direct_tool_routing: true
     sampling:
-      temperature: 0.2   # keep all arms in sync, eliminating sampling bias
+      temperature: 0.2   # 同步所有 arm,排除采样偏差
       top_p: 0.95
       max_tokens: 4096
 
   - id: arm_b
-    label: "enhanced agent + 0.5B"
-    purpose: "small model + engineering enhancements (cost-correctness tradeoff)"
+    label: "你的 agent + 0.5B"
+    purpose: "小模型 + 你的工程 (cost-correctness tradeoff)"
     model: qwen2.5:0.5b
     backend: ollama
     features:
@@ -35,14 +35,14 @@ arms:
       max_tokens: 4096
 
   - id: arm_c
-    label: "bare 7B (control)"
-    purpose: "control group — all engineering enhancements off, leaving only the 7B model + basic tool calling"
+    label: "裸 7B (control)"
+    purpose: "控制组 — 关掉所有你的工程,只剩 7B 模型 + 基础 tool calling"
     model: qwen2.5:7b
     backend: ollama
     features:
-      hallucination_guard: false   # ← critical: turned off
-      reflexion: false             # ← critical: turned off
-      verifier: false              # ← critical: turned off
+      hallucination_guard: false   # ← critical: 关掉
+      reflexion: false             # ← critical: 关掉
+      verifier: false              # ← critical: 关掉
       direct_tool_routing: false
     sampling:
       temperature: 0.2
@@ -51,11 +51,11 @@ arms:
 
   - id: arm_d
     label: "GPT-4o ceiling"
-    purpose: "commercial ceiling reference (honest gap)"
+    purpose: "商业天花板 reference (诚实距离)"
     model: gpt-4o
     backend: openai
     features:
-      hallucination_guard: false   # GPT-4o needs no extra guard
+      hallucination_guard: false   # GPT-4o 不需要你的 guard
       reflexion: false
       verifier: false
       direct_tool_routing: false
@@ -69,5 +69,5 @@ runtime:
   agent_url: "http://localhost:8580"   # python agent-server
   trials_per_task: 5                   # n-of-k = 3/5 pass threshold
   parallelism: 2                       # how many tasks in flight at once
-  timeout_seconds: 300                 # per single trial
+  timeout_seconds: 180                 # per single trial
   retry_on_5xx: 2                      # transient infra hiccup retries

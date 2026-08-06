@@ -13,6 +13,10 @@ PRODUCTION PATTERN:
 Currently implements:
 - Intent classification (meta-question vs coding task)
 - Topic switch detection (new topic vs continuation)
+
+Evaluation contract:
+Report measured accuracy and latency from the labeled dataset. Do not publish
+placeholder percentages or extrapolate a local result to production traffic.
 """
 
 import asyncio
@@ -72,10 +76,10 @@ TOPIC_SWITCH_TEST_CASES = [
 # Labeled set for C2 — direct tool routing.
 # label = expected tool name OR "fallthrough" (must NOT route)
 #
-# Curate from real prompts before quoting accuracy numbers;
+# Curate from representative prompts before quoting accuracy numbers;
 # this seed set is for unit testing the classifier, not for production
-# set" with the actual number, not extrapolate to "the model is X%
-# accurate in production".
+# claims. Reports should use the actual labeled-set result rather than
+# extrapolating to production accuracy.
 DIRECT_ROUTING_TEST_CASES = [
     # Positives — should route
     {"input": "search my memory for jwt", "label": "memory_search"},
@@ -128,10 +132,10 @@ def heuristic_topic_switch(text: str, prev_messages: list[dict]) -> str:
 
 async def llm_intent(text: str, model: str = "qwen2.5:0.5b") -> str:
     """Classify intent using a weak LLM (tiny model, ~200ms).
-    
+
     Uses a structured prompt that forces the LLM to respond with exactly
     one word: "meta" or "task". This is cheaper than a full agent loop.
-    
+
     WHY A WEAK MODEL?
     - qwen2.5:0.5b is ~300MB, loads in <1s, infers in ~50ms
     - Classification doesn't need reasoning — it needs pattern matching
@@ -162,7 +166,7 @@ Classification:"""
 
 async def llm_topic_switch(text: str, prev_topic: str, model: str = "qwen2.5:0.5b") -> str:
     """Detect topic switch using a weak LLM.
-    
+
     This catches cases the heuristic misses:
     - "what about the error case?" → continuation (heuristic says switch because it starts with "what")
     - "also add logging" → continuation (heuristic says switch because "also")

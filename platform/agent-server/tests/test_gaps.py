@@ -5,14 +5,20 @@ import subprocess
 import pytest
 
 from app.tools.agent_mode import set_workspace_root, run_tests
+from app.context.request_context import set_request_context
+from app.runtime import reset_idempotency_store_for_tests
 from app.rag.reranking.dispatcher import rerank, heuristic_rerank
 from app.rag.index.retriever import ScoredChunk
 
 
 @pytest.fixture(autouse=True)
 def workspace(tmp_path):
+    set_request_context("", "", "")
+    import asyncio
+    asyncio.run(reset_idempotency_store_for_tests())
     set_workspace_root(str(tmp_path))
     yield tmp_path
+    set_request_context("", "", "")
 
 
 class TestRunTests:
@@ -31,6 +37,15 @@ class TestRunTests:
         result = run_tests.invoke({"test_command": "echo 'tests passed'"})
         assert "✅" in result
         assert "tests passed" in result
+
+    def test_custom_command_replays_without_second_execution(self, workspace):
+        set_request_context("req-1", "run-1", "tenant:s1")
+        marker = workspace / "marker.txt"
+        command = "printf x >> marker.txt"
+        first = run_tests.invoke({"test_command": command})
+        second = run_tests.invoke({"test_command": command})
+        assert first == second
+        assert marker.read_text() == "x"
 
 
 class TestReranker:

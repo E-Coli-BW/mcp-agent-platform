@@ -9,9 +9,12 @@ import base64
 from typing import Any, Optional
 
 
+_MAX_LEGACY_TOKEN_CACHE = 1024
+
+
 class McpToolClient:
     """HTTP client for calling tool backends via REST bridge.
-    
+
     Authentication strategy (in order):
     1. AuthServiceClient (centralized RS256 JWT from auth service)
     2. Self-signed HMAC JWT (legacy fallback if auth service unavailable)
@@ -31,8 +34,7 @@ class McpToolClient:
         self._audience = audience
         self._client: httpx.AsyncClient | None = None
         # Legacy self-signed token cache
-        self._cached_token: str | None = None
-        self._token_expires: float = 0
+        self._token_cache: dict[tuple[str, str], tuple[str, float]] = {}
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -59,13 +61,21 @@ class McpToolClient:
             return None
 
         now = time.time()
-        if self._cached_token and now < self._token_expires:
-            return self._cached_token
+        resolved_tenant = tenant_id or "default"
+        cache_key = (resolved_tenant, self._audience)
+        cached = self._token_cache.get(cache_key)
+        if cached is not None and now < cached[1]:
+            self._token_cache.pop(cache_key)
+            self._token_cache[cache_key] = cached
+            return cached[0]
+        for key, (_, expires_at) in list(self._token_cache.items()):
+            if now >= expires_at:
+                self._token_cache.pop(key, None)
 
         header = base64.urlsafe_b64encode(b'{"alg":"HS256","typ":"JWT"}').rstrip(b'=').decode()
         payload_data = {
             "sub": self._service_name,
-            "tenant_id": tenant_id or "default",
+            "tenant_id": resolved_tenant,
             "iat": int(now),
             "exp": int(now) + 3600,
             "roles": ["SERVICE"],
@@ -82,9 +92,12 @@ class McpToolClient:
             hmac.new(secret_bytes, signing_input.encode(), hashlib.sha256).digest()
         ).rstrip(b'=').decode()
 
-        self._cached_token = f"{header}.{payload}.{signature}"
-        self._token_expires = now + 3300
-        return self._cached_token
+        token = f"{header}.{payload}.{signature}"
+        self._token_cache[cache_key] = (token, now + 3300)
+        while len(self._token_cache) > _MAX_LEGACY_TOKEN_CACHE:
+            oldest_key = next(iter(self._token_cache))
+            self._token_cache.pop(oldest_key)
+        return token
 
     async def close(self):
         """Close the underlying connection pool."""
@@ -93,7 +106,7 @@ class McpToolClient:
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any], tenant_id: str | None = None) -> str:
         """Call a tool via the REST bridge endpoint.
-        
+
         Propagates OpenTelemetry trace context via W3C headers so the
         Java backend creates child spans under the same trace.
 
@@ -131,13 +144,13 @@ class McpToolClient:
                     data = resp.json()
                     return data.get("result", json.dumps(data))
                 else:
-                    return f"Error: HTTP {resp.status_code} from {tool_name}"
+                    return f"❌ HTTP {resp.status_code} from {tool_name}"
             except httpx.ConnectError:
                 span.set_attribute("error", True)
-                return f"Error: Cannot connect to {self.base_url} — is the service running?"
+                return f"❌ Cannot connect to {self.base_url} — is the service running?"
             except Exception as e:
                 span.record_exception(e)
-                return f"Error calling {tool_name}: {str(e)}"
+                return f"❌ Error calling {tool_name}: {str(e)}"
 
 
 # ── Agent fleet lineage propagation ────────────────────────────────────────
@@ -198,4 +211,3 @@ def _inject_lineage_headers(headers: dict[str, str]) -> None:
     headers[HEADER_ROOT_SESSION] = ctx.root_session_id
     headers[HEADER_PARENT_SESSION] = ctx.parent_session_id
     headers[HEADER_DEPTH] = str(ctx.depth)
-

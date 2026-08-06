@@ -108,13 +108,15 @@ class TestLearnedReranker:
                                     "features": features, "timestamp": 0}) + "\n")
 
         old_weights = reranker.weights.copy()
-        reranker.retrain(min_samples=5)
-        new_weights = reranker.weights
+        candidate = reranker.retrain(min_samples=5)
 
-        # Weights should have changed
-        assert not np.allclose(old_weights, new_weights)
+        # Retraining creates a candidate and must not mutate active behavior.
+        assert np.allclose(old_weights, reranker.weights)
+        assert candidate is not None
+        candidate_weights = np.array(candidate["weights"])
+        assert not np.allclose(old_weights, candidate_weights)
         # name_match_ratio weight should increase (strong positive signal)
-        assert new_weights[0] >= old_weights[0] * 0.8  # at least not much lower
+        assert candidate_weights[0] >= old_weights[0] * 0.8
 
     def test_weights_persist_to_disk(self, tmp_path, monkeypatch):
         import app.rag.reranking.learned as lr
@@ -130,3 +132,16 @@ class TestLearnedReranker:
         assert (tmp_path / "weights.json").exists()
         data = json.loads((tmp_path / "weights.json").read_text())
         assert data["weights"] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+
+    def test_candidate_promotion_requires_held_out_lift(self, tmp_path, monkeypatch):
+        import app.rag.reranking.learned as lr
+        monkeypatch.setattr(lr, "CANDIDATE_WEIGHTS_FILE", tmp_path / "candidate.json")
+        monkeypatch.setattr(lr, "WEIGHTS_FILE", tmp_path / "weights.json")
+        monkeypatch.setattr(lr, "BACKUP_WEIGHTS_FILE", tmp_path / "previous.json")
+        reranker = LearnedReranker()
+        candidate = {"weights": reranker.weights.tolist(), "status": "candidate"}
+        lr.CANDIDATE_WEIGHTS_FILE.write_text(json.dumps(candidate))
+        with pytest.raises(ValueError):
+            reranker.promote_candidate_if_better({"improvement": -0.1}, min_improvement=0.0)
+        promoted = reranker.promote_candidate_if_better({"improvement": 0.1}, min_improvement=0.0)
+        assert promoted["held_out_evaluation"]["improvement"] == 0.1

@@ -1,15 +1,15 @@
 /**
  * Search engine: TF-IDF keyword matching + forgetting curve weighting
- * Search engine: TF-IDF keyword matching + forgetting-curve weighting
+ * 搜索引擎: TF-IDF 关键词匹配 + 遗忘曲线加权
  */
 
 import type { MemoryEntry } from "./types.js";
 import { computeRetention, type ForgetConfig } from "./forgetting-curve.js";
 
-// ─── Tokenizer ──────────────────────────────────────────────────────────────
+// ─── Tokenizer / 分词器 ──────────────────────────────────────────────────────
 
 /** Split on non-word chars, lowercase, filter short tokens
- *  Split on non-word characters, lowercase, and filter out short tokens */
+ *  按非词字符分割，转小写，过滤短 token */
 export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
@@ -17,7 +17,7 @@ export function tokenize(text: string): string[] {
     .filter((t) => t.length > 1);
 }
 
-/** Compute term frequency map */
+/** Compute term frequency map / 计算词频映射 */
 export function termFrequency(tokens: string[]): Map<string, number> {
   const tf = new Map<string, number>();
   for (const t of tokens) {
@@ -26,7 +26,7 @@ export function termFrequency(tokens: string[]): Map<string, number> {
   return tf;
 }
 
-// ─── Relevance Scoring ──────────────────────────────────────────────────────
+// ─── Relevance Scoring / 相关度评分 ──────────────────────────────────────────
 
 /**
  * Score = textRelevance × retentionBoost
@@ -34,13 +34,13 @@ export function termFrequency(tokens: string[]): Map<string, number> {
  * textRelevance: TF overlap + prefix matching + tag matching (same as before)
  * retentionBoost: 0.5 + 0.5 * retention
  *   Decayed memories are demoted but never completely hidden.
- *   Decayed memories are down-weighted but never fully disappear.
+ *   衰减的记忆降权但不会完全消失。
  *
- * Examples:
- *   - retention=1.0 (just used / pinned) → boost=1.0 (no effect)
+ * Examples / 示例:
+ *   - retention=1.0 (just used / pinned) → boost=1.0 (no effect / 不影响)
  *   - retention=0.5 → boost=0.75
  *   - retention=0.1 → boost=0.55
- *   - retention=0.0 → boost=0.50 (at most halved)
+ *   - retention=0.0 → boost=0.50 (at most halved / 最多降一半)
  */
 export function relevanceScore(
   entry: MemoryEntry,

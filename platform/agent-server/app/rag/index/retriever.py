@@ -11,6 +11,7 @@ Select via: AGENT_RAG_BACKEND=memory|redis|milvus  (default: memory)
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 from abc import ABC, abstractmethod
@@ -40,6 +41,7 @@ class ScoredChunk:
     start_line: int
     end_line: int
     score: float = 0.0
+    metadata: dict = None
 
 
 class VectorRetriever(ABC):
@@ -68,7 +70,7 @@ class VectorRetriever(ABC):
         ...
 
     @abstractmethod
-    async def search(self, query: str, top_k: int = 10) -> list[ScoredChunk]:
+    async def search(self, query: str, top_k: int = 10, metadata_filter: dict | None = None) -> list[ScoredChunk]:
         """Search for relevant chunks. Returns scored results sorted by relevance."""
         ...
 
@@ -107,10 +109,65 @@ class InMemoryRetriever(VectorRetriever):
         self.chunks: list[CodeChunk] = []
         self.embeddings: np.ndarray | None = None  # shape: (n_chunks, embed_dim)
         self._indexed = False
+        # ── BM25 statistics (precomputed at load_index) ────────────────
+        self._bm25_tf: list[dict[str, int]] = []
+        self._bm25_doc_len: list[int] = []
+        self._bm25_avgdl: float = 0.0
+        self._bm25_idf: dict[str, float] = {}
 
     @property
     def is_indexed(self) -> bool:
         return self._indexed and len(self.chunks) > 0
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        """Split on non-word chars; lowercase. Shared by index + query."""
+        return [t for t in re.split(r"\W+", text.lower()) if t]
+
+    def _build_bm25_stats(self):
+        """Precompute BM25 corpus statistics (TF per doc, doc lengths, IDF).
+
+        IDF uses the Lucene/ES 'probabilistic' form with +1 to stay non-negative:
+            idf(t) = ln( (N - df + 0.5) / (df + 0.5) + 1 )
+        """
+        self._bm25_tf = []
+        self._bm25_doc_len = []
+        doc_freq: dict[str, int] = {}
+
+        for chunk in self.chunks:
+            tokens = self._tokenize(chunk.content + " " + chunk.name)
+            tf: dict[str, int] = {}
+            for tok in tokens:
+                tf[tok] = tf.get(tok, 0) + 1
+            self._bm25_tf.append(tf)
+            self._bm25_doc_len.append(len(tokens))
+            for term in tf:
+                doc_freq[term] = doc_freq.get(term, 0) + 1
+
+        n = len(self.chunks)
+        self._bm25_avgdl = (sum(self._bm25_doc_len) / n) if n else 0.0
+        self._bm25_idf = {
+            term: math.log((n - df + 0.5) / (df + 0.5) + 1.0)
+            for term, df in doc_freq.items()
+        }
+
+    def _bm25_scores(self, query: str, k1: float = 1.5, b: float = 0.75) -> list[float]:
+        """Okapi BM25 scoring. k1=TF saturation, b=length normalization."""
+        q_terms = self._tokenize(query)
+        scores = [0.0] * len(self.chunks)
+        if not self._bm25_avgdl:
+            return scores
+        for i, tf in enumerate(self._bm25_tf):
+            dl = self._bm25_doc_len[i]
+            denom_norm = k1 * (1.0 - b + b * dl / self._bm25_avgdl)
+            s = 0.0
+            for term in q_terms:
+                f = tf.get(term)
+                if not f:
+                    continue
+                s += self._bm25_idf.get(term, 0.0) * (f * (k1 + 1.0)) / (f + denom_norm)
+            scores[i] = s
+        return scores
 
     def load_index(self, chunks: list[CodeChunk], embeddings: list[list[float]]):
         """Load pre-computed chunks and embeddings."""
@@ -120,6 +177,7 @@ class InMemoryRetriever(VectorRetriever):
         norms = np.linalg.norm(self.embeddings, axis=1, keepdims=True)
         norms[norms == 0] = 1
         self.embeddings = self.embeddings / norms
+        self._build_bm25_stats()
         self._indexed = True
 
     def save_index(self, path: str):
@@ -136,6 +194,7 @@ class InMemoryRetriever(VectorRetriever):
                 "name": c.name,
                 "start_line": c.start_line,
                 "end_line": c.end_line,
+                "metadata": c.metadata,
             }
             for c in self.chunks
         ]
@@ -149,10 +208,11 @@ class InMemoryRetriever(VectorRetriever):
         self.embeddings = np.load(p / "embeddings.npy")
         chunks_data = json.loads((p / "chunks.json").read_text())
         self.chunks = [CodeChunk(**d, last_modified=None) for d in chunks_data]
+        self._build_bm25_stats()  # rebuild BM25 stats after disk load
         self._indexed = True
         return True
 
-    async def search(self, query: str, top_k: int = 10) -> list[ScoredChunk]:
+    async def search(self, query: str, top_k: int = 10, metadata_filter: dict | None = None) -> list[ScoredChunk]:
         """Hybrid search: vector + keyword, merged with RRF."""
         if not self.is_indexed:
             return []
@@ -162,7 +222,8 @@ class InMemoryRetriever(VectorRetriever):
         query_vec = np.array(query_emb, dtype=np.float32)
         query_vec = query_vec / (np.linalg.norm(query_vec) or 1)
         vector_scores = self.embeddings @ query_vec  # cosine similarity
-        vector_top = np.argsort(vector_scores)[::-1][: top_k * 2]
+        allowed = [i for i, chunk in enumerate(self.chunks) if _matches_metadata(chunk.metadata, metadata_filter)]
+        vector_top = [i for i in np.argsort(vector_scores)[::-1] if i in allowed][: top_k * 2]
 
         vector_results = [
             ScoredChunk(
@@ -174,23 +235,15 @@ class InMemoryRetriever(VectorRetriever):
                 start_line=self.chunks[i].start_line,
                 end_line=self.chunks[i].end_line,
                 score=float(vector_scores[i]),
+                metadata=self.chunks[i].metadata,
             )
             for i in vector_top
         ]
 
-        # Keyword search (simple BM25-like TF matching)
-        query_tokens = set(re.split(r"\W+", query.lower()))
-        keyword_scores = []
-        for i, chunk in enumerate(self.chunks):
-            text = (chunk.content + " " + chunk.name).lower()
-            tokens = re.split(r"\W+", text)
-            if not tokens:
-                keyword_scores.append(0)
-                continue
-            matches = sum(1 for t in tokens if t in query_tokens)
-            keyword_scores.append(matches / (len(tokens) ** 0.5))
+        # Keyword search (real Okapi BM25 with precomputed corpus stats)
+        keyword_scores = self._bm25_scores(query)
 
-        keyword_top = np.argsort(keyword_scores)[::-1][: top_k * 2]
+        keyword_top = [i for i in np.argsort(keyword_scores)[::-1] if i in allowed][: top_k * 2]
         keyword_results = [
             ScoredChunk(
                 content=self.chunks[i].content,
@@ -201,6 +254,7 @@ class InMemoryRetriever(VectorRetriever):
                 start_line=self.chunks[i].start_line,
                 end_line=self.chunks[i].end_line,
                 score=float(keyword_scores[i]),
+                metadata=self.chunks[i].metadata,
             )
             for i in keyword_top
             if keyword_scores[i] > 0
@@ -209,6 +263,21 @@ class InMemoryRetriever(VectorRetriever):
         # RRF merge
         merged = self.rrf(vector_results, keyword_results)
         return merged[:top_k]
+
+
+def _matches_metadata(metadata: dict | None, requested: dict | None) -> bool:
+    """Exact-match allowlist filter; missing metadata never passes a filter."""
+    if not requested:
+        return True
+    actual = metadata or {}
+    for key, expected in requested.items():
+        value = actual.get(key)
+        if isinstance(expected, (list, tuple, set)):
+            if value not in expected:
+                return False
+        elif value != expected:
+            return False
+    return True
 
     @staticmethod
     def _rrf(*result_lists: list[ScoredChunk], k: int = 60) -> list[ScoredChunk]:
@@ -220,7 +289,7 @@ class InMemoryRetriever(VectorRetriever):
 
 _retriever_cache: dict[str, VectorRetriever] = {}
 _retriever_lock = asyncio.Lock()
-# TODO: Add LRU eviction policy for the retriever cache.
+# TODO: Add LRU eviction policy — see CODE-REVIEW-2026-05-27.md C7
 
 
 def _build_retriever(backend: str) -> VectorRetriever:

@@ -1,8 +1,8 @@
 # Coding Agent Server — Design Document
 
-> **Status:** Design → implement  
-> **Language:** Python (FastAPI + LangGraph)  
-> **Connects to:** Java MCP tool backends (memory:8180, filesearch:8280, codeexec:8380)  
+> **Status:** Design → implement
+> **Language:** Python (FastAPI + LangGraph)
+> **Connects to:** Java MCP tool backends (memory:8180, filesearch:8280, codeexec:8380)
 > **Goal:** OpenAI-compatible coding agent with RAG, streaming, and tool use
 
 ---
@@ -152,7 +152,7 @@ Query Time (online):
 
 ### 2.4 SSE Streaming (Without Duplication)
 
-The availability-evaluation problem you mentioned. Root causes and fixes:
+The 可可用用性性评评估估 problem you mentioned. Root causes and fixes:
 
 ```
 Problem 1: Client reconnects without last-event-id
@@ -190,7 +190,7 @@ Reuse the `LlmProvider` SPI concept from our Java Model Router, but in Python:
 ```python
 class ModelRouter:
     """Route to best model based on task type and cost."""
-    
+
     def route(self, task_type: str, budget: TokenBudget) -> LLMConfig:
         if task_type == "classify" or task_type == "summarize":
             return self.cheap_model    # GPT-4o-mini or local Ollama
@@ -199,7 +199,7 @@ class ModelRouter:
         if task_type == "explain":
             return self.medium_model   # whatever's available
         return self.default_model
-    
+
     # Fallback chain: primary → secondary → local
     providers = [OpenAIProvider, AnthropicProvider, OllamaProvider]
 ```
@@ -212,11 +212,11 @@ class ConversationStore:
     async def get(self, session_id: str) -> Conversation:
         # Try Redis first (TTL 30 min)
         # Fall back to PostgreSQL
-    
+
     async def append(self, session_id: str, message: Message):
         # Write to Redis (immediate)
         # Async write to PostgreSQL (durable)
-    
+
     async def get_context_window(self, session_id: str, max_tokens: int) -> list[Message]:
         # Return recent messages that fit in token budget
         # Summarize old messages if needed
@@ -227,7 +227,7 @@ class ConversationStore:
 ```python
 # Log every retrieval for offline analysis
 class RetrievalLogger:
-    async def log(self, query: str, chunks: list[Chunk], 
+    async def log(self, query: str, chunks: list[Chunk],
                   chunks_used_by_agent: list[str], user_feedback: str = None):
         await db.insert("retrieval_logs", {
             "query": query,
@@ -359,7 +359,7 @@ Day 7: Polish
 
 | Decision | Choice | Alternative | Why |
 |----------|--------|-------------|-----|
-| Language | Python | Java | LLM ecosystem is Python-first |
+| Language | Python | Java | LLM ecosystem maturity and integration support |
 | Agent framework | LangGraph | Raw loops, CrewAI | Stateful graphs, production-ready, good docs |
 | LLM client | litellm | openai SDK directly | Unified API across providers, retry built-in |
 | Vector DB | pgvector | Milvus, ChromaDB, Pinecone | Reuse existing PG, no new infra to manage |
@@ -371,9 +371,9 @@ Day 7: Polish
 
 ---
 
-## 7. Technical Highlights
+## 7. Operational Strengths
 
-| Feature | Technical Signal |
+| Feature | Engineering Value |
 |---------|-----------------|
 | OpenAI-compatible API | "I understand the industry standard LLM API" |
 | ReAct agent loop | "I built autonomous agents, not just prompt wrappers" |
@@ -396,26 +396,26 @@ User: "Fix the authentication bug that was reported yesterday"
 Agent (internally):
   1. Intent: code_fix (confidence: 0.9)
   2. Plan: memory_search → file_search → code_run → respond
-  
+
   Step 1: memory_search("authentication bug yesterday")
   → Found: "Bug #42: JWT token not refreshing on session timeout"
-  
-  Step 2: file_search("JWT refresh token", directory="src/auth")  
+
+  Step 2: file_search("JWT refresh token", directory="src/auth")
   → Found: JwtAuthFilter.java:47 — missing refresh logic
-  
+
   Step 3: RAG retrieval for "JWT refresh token pattern in Spring"
   → Retrieved: 3 relevant code chunks showing refresh patterns
-  
+
   Step 4: LLM generates fix based on context
   → Produces: code diff for JwtAuthFilter.java
-  
+
   Step 5: code_run("python -c 'print(\"fix looks syntactically valid\")'")
   → Validation passed
 
 Agent (to user, streamed):
   "I found the bug. In `JwtAuthFilter.java:47`, the token refresh
   logic is missing. Based on the project patterns, here's the fix:
-  
+
   ```java
   // Add after line 47
   if (isTokenExpired(claims) && hasRefreshToken(request)) {
@@ -423,8 +423,8 @@ Agent (to user, streamed):
       response.setHeader("X-New-Token", token);
   }
   ```
-  
+
   I've saved this fix to memory for future reference."
-  
+
   Step 6: memory_set("auth-bug-fix-42", "JWT refresh fix: ...")
 ```

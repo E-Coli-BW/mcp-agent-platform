@@ -1,0 +1,10 @@
+id: customer_qa_faq_grounded
+description: Customer QA must retrieve evidence before answering a policy question.
+prompt: "What is the return policy?"
+tags: [customer-qa, smoke, grounded]
+model: customer-qa-agent
+expected:
+  tools_called: [rag_search]
+  tools_called_min: 1
+  tools_forbidden: [file_write, file_edit, code_run, memory_set]
+  final_must_contain: [support]

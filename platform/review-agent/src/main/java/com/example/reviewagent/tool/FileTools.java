@@ -14,6 +14,10 @@ import java.util.stream.Stream;
  *
  * These are Spring AI @Tool beans, automatically registered with ChatClient.
  * The agent calls them via function calling (Ollama native tool API).
+ *
+ * INTERVIEW POINT: Same tool pattern as the Python agent, but using
+ * Spring AI's annotation-based tool registration instead of LangChain's
+ * @tool decorator. Both generate JSON schemas for the LLM.
  */
 @Component
 public class FileTools {

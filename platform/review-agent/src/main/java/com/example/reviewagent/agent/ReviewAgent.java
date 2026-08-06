@@ -20,6 +20,11 @@ import org.springframework.stereotype.Service;
  *   - prompt modifier          → ChatClient Advisors (MessageChatMemoryAdvisor)
  *   - MemorySaver checkpointer → InMemoryChatMemory
  *   - astream_events()         → ChatClient.prompt().stream().content()
+ *
+ * INTERVIEW POINT: "I built the main agent in Python (LangGraph) and a
+ * focused review agent in Java (Spring AI) to demonstrate both ecosystems.
+ * The architecture is identical — ReAct loop with tool calling — only the
+ * framework differs."
  */
 @Service
 public class ReviewAgent {

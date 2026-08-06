@@ -1,4 +1,4 @@
-"""Tests for request → graph temperature plumbing.
+"""Tests for request → graph temperature plumbing (latent bug D fix).
 
 Until this fix, `chat.py` accepted `temperature` in the OpenAI-compatible
 request schema but silently dropped it; `graph.py::_create_chat_model`
@@ -203,3 +203,70 @@ class TestGetAgentCacheKey:
         a2 = await graph_mod.get_agent("qwen2.5:7b", temperature=0.7)
         assert a1 is a2
         assert call_count["n"] == 1
+
+    @pytest.mark.asyncio
+    async def test_configured_cache_hit_rebinds_agent_contract(self, monkeypatch):
+        import app.agent.graph as graph_mod
+        import app.registry.config_loader as config_loader_mod
+        from app.config import settings
+        from app.context.request_context import get_request_context, set_agent_contract
+        from app.registry.config_loader import AgentConfig
+
+        config = AgentConfig(
+            id="customer-agent",
+            name="Customer Agent",
+            tools=[],
+            knowledge={"collection": "customer-faq"},
+        )
+        sentinel = object()
+
+        def fake_create_agent_from_config(agent_config, temperature=None):
+            set_agent_contract(
+                agent_config.id,
+                agent_config.knowledge.get("collection", ""),
+            )
+            return sentinel
+
+        monkeypatch.setattr(settings, "agent_graph_version", "v1")
+        monkeypatch.setattr(
+            config_loader_mod,
+            "load_all_configs",
+            lambda _directory: {config.id: config},
+        )
+        monkeypatch.setattr(
+            graph_mod,
+            "create_agent_from_config",
+            fake_create_agent_from_config,
+        )
+        monkeypatch.setattr(graph_mod, "_agents", {})
+        monkeypatch.setattr(graph_mod, "_agent_tool_names", {})
+
+        assert await graph_mod.get_agent(config.id) is sentinel
+        set_agent_contract("poisoned-agent", "poisoned-collection")
+        assert await graph_mod.get_agent(config.id) is sentinel
+
+        context = get_request_context()
+        assert context.agent_id == config.id
+        assert context.knowledge_collection == "customer-faq"
+
+    @pytest.mark.asyncio
+    async def test_fallback_agent_clears_previous_agent_contract(self, monkeypatch):
+        import app.agent.graph as graph_mod
+        import app.registry.config_loader as config_loader_mod
+        import app.tools.definitions as definitions_mod
+        from app.config import settings
+        from app.context.request_context import get_request_context, set_agent_contract
+
+        monkeypatch.setattr(settings, "agent_graph_version", "v1")
+        monkeypatch.setattr(config_loader_mod, "load_all_configs", lambda _directory: {})
+        monkeypatch.setattr(definitions_mod, "get_tools", lambda: [])
+        monkeypatch.setattr(graph_mod, "create_agent", lambda *args, **kwargs: object())
+        monkeypatch.setattr(graph_mod, "_agents", {})
+        monkeypatch.setattr(graph_mod, "_agent_tool_names", {})
+        set_agent_contract("customer-agent", "customer-faq")
+
+        await graph_mod.get_agent("unconfigured-model")
+
+        context = get_request_context()
+        assert context.agent_id == ""
+        assert context.knowledge_collection == ""

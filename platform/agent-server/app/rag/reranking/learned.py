@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 FEEDBACK_LOG = Path.home() / ".mcp-local" / "reranker-feedback.jsonl"
 WEIGHTS_FILE = Path.home() / ".mcp-local" / "reranker-weights.json"
+CANDIDATE_WEIGHTS_FILE = Path.home() / ".mcp-local" / "reranker-weights.candidate.json"
+BACKUP_WEIGHTS_FILE = Path.home() / ".mcp-local" / "reranker-weights.previous.json"
 
 # Feature names (order matters — matches weight vector)
 FEATURE_NAMES = [
@@ -127,10 +129,10 @@ class LearnedReranker:
 
     def log_feedback(self, query: str, retrieved_chunks: list[ScoredChunk], used_paths: list[str]):
         """Log implicit feedback: which chunks the agent actually used.
-        
+
         Called after the agent completes a turn. `used_paths` are the file paths
         the agent read via file_read after calling rag_search.
-        
+
         Label: 1 if chunk's file_path matches any used_path, 0 otherwise.
         """
         used_set = {os.path.basename(p) for p in used_paths}
@@ -160,15 +162,15 @@ class LearnedReranker:
         logger.info("Logged feedback: query='%s', %d chunks, %d used",
                      query, len(retrieved_chunks), len(used_paths))
 
-    def retrain(self, min_samples: int = 20):
+    def retrain(self, min_samples: int = 20, promote: bool = False):
         """Retrain weights from accumulated feedback using logistic regression.
-        
+
         Uses simple gradient descent on log-loss — no sklearn needed.
         This can be called periodically (e.g., every 50 queries).
         """
         if not FEEDBACK_LOG.exists():
             logger.info("No feedback data yet — skipping retrain")
-            return
+            return None
 
         # Load all feedback
         X, y = [], []
@@ -183,12 +185,12 @@ class LearnedReranker:
 
         if len(X) < min_samples:
             logger.info("Only %d samples (need %d) — skipping retrain", len(X), min_samples)
-            return
+            return None
 
         # Check we have both positive and negative examples
         if y.sum() == 0 or y.sum() == len(y):
             logger.info("All same label — skipping retrain")
-            return
+            return None
 
         # Logistic regression via gradient descent
         w = self.weights.copy()
@@ -206,8 +208,51 @@ class LearnedReranker:
         new_weights = dict(zip(FEATURE_NAMES, w.round(3)))
         logger.info("Retrained weights:\n  Old: %s\n  New: %s", old_weights, new_weights)
 
-        self.weights = w
-        self._save_weights()
+        candidate = {
+            "weights": w.tolist(), "feature_names": FEATURE_NAMES,
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "sample_count": len(X), "status": "candidate",
+        }
+        CANDIDATE_WEIGHTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CANDIDATE_WEIGHTS_FILE.write_text(json.dumps(candidate, indent=2))
+        if promote:
+            self.promote_candidate()
+        return candidate
+
+    def promote_candidate(self) -> dict:
+        """Atomically promote the candidate and retain one rollback copy."""
+        if not CANDIDATE_WEIGHTS_FILE.exists():
+            raise FileNotFoundError("no reranker candidate available")
+        if WEIGHTS_FILE.exists():
+            BACKUP_WEIGHTS_FILE.write_text(WEIGHTS_FILE.read_text())
+        candidate = json.loads(CANDIDATE_WEIGHTS_FILE.read_text())
+        candidate["status"] = "promoted"
+        candidate["promoted_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        WEIGHTS_FILE.write_text(json.dumps(candidate, indent=2))
+        self.weights = np.array(candidate["weights"])
+        return candidate
+
+    def promote_candidate_if_better(self, evaluation: dict, min_improvement: float = 0.0) -> dict:
+        """Promote only when a caller supplies a passing held-out evaluation."""
+        if not CANDIDATE_WEIGHTS_FILE.exists():
+            raise FileNotFoundError("no reranker candidate available")
+        improvement = float(evaluation.get("improvement", -1.0))
+        if improvement < min_improvement:
+            raise ValueError(
+                f"candidate improvement {improvement:.3f} < required {min_improvement:.3f}"
+            )
+        promoted = self.promote_candidate()
+        promoted["held_out_evaluation"] = evaluation
+        return promoted
+
+    def rollback_weights(self) -> dict:
+        """Restore the last promoted weights, if a backup exists."""
+        if not BACKUP_WEIGHTS_FILE.exists():
+            raise FileNotFoundError("no previous reranker weights available")
+        previous = json.loads(BACKUP_WEIGHTS_FILE.read_text())
+        WEIGHTS_FILE.write_text(json.dumps(previous, indent=2))
+        self.weights = np.array(previous["weights"])
+        return previous
 
     def get_weights_info(self) -> dict:
         """Return current weights for debugging/display."""
@@ -215,14 +260,17 @@ class LearnedReranker:
             "weights": dict(zip(FEATURE_NAMES, self.weights.round(4).tolist())),
             "feedback_count": sum(1 for _ in open(FEEDBACK_LOG)) if FEEDBACK_LOG.exists() else 0,
             "weights_file": str(WEIGHTS_FILE),
+            "candidate_file": str(CANDIDATE_WEIGHTS_FILE),
+            "rollback_file": str(BACKUP_WEIGHTS_FILE),
+            "candidate_exists": CANDIDATE_WEIGHTS_FILE.exists(),
         }
 
     def evaluate(self, test_ratio: float = 0.2) -> dict | None:
         """Offline evaluation: compare learned weights vs default on held-out test set.
-        
+
         Splits feedback into train/test, trains on train set, evaluates both
         learned and default weights on test set. Reports accuracy and AUC-ROC.
-        
+
         Returns None if insufficient data.
         """
         if not FEEDBACK_LOG.exists():

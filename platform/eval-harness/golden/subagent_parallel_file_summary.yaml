@@ -77,9 +77,9 @@ expected:
   max_latency_ms: 90000
 
   # ── n-of-k flakiness tolerance ────────────────────────────────
-  # Empirically at T=0.7 the case is 3/5 flaky (the temperature-plumbing
-  # bug — graph.py used to hardcode T=0.7 ignoring the eval-runner's
-  # `temperature: 0`). After the fix, the eval-runner's T=0 actually plumbs
+  # Empirically at T=0.7 the case is 3/5 flaky (latent bug D — graph.py
+  # used to hardcode T=0.7 ignoring the eval-runner's `temperature: 0`).
+  # After commit fixing bug D, the eval-runner's T=0 actually plumbs
   # through and the case is 5/5 fully deterministic (identical output
   # 332 chars every run). We could set min_pass_rate: 1.0 here, but
   # leaving it at 0.8 gives one-run cushion against unrelated transient

@@ -9,8 +9,9 @@ import java.util.Map;
  * Schema for tool execution events consumed from Kafka.
  * Shared between Python producer and Java consumer.
  *
- * Note: In production, consider Avro/Protobuf with a schema registry
- * for stronger cross-language contract enforcement.
+ * INTERVIEW POINT: This is a cross-language event schema. The Python
+ * agent produces JSON events, the Java consumer deserializes them.
+ * In production, you'd use Avro/Protobuf with a schema registry.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ToolEventRecord(

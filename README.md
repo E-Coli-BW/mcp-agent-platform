@@ -1,6 +1,6 @@
 # MCP Agent Platform
 
-A full-stack **Agent runtime platform** for building, deploying, and evaluating LLM-powered coding agents with distributed tool backends.
+A full-stack **Agent runtime platform** built for learning and demonstrating distributed systems + LLM agent engineering.
 
 ## Architecture
 
@@ -97,21 +97,17 @@ docker-compose -f platform/docker-compose.yml up -d
 ```
 ├── platform/
 │   ├── agent-server/        # Python: FastAPI + LangGraph ReAct agent
-│   ├── agent-server-java/   # Java: Spring AI ChatClient (same API, fallback)
+│   ├── agent-server-java/   # Java: Spring AI ChatClient (same API)
 │   ├── agent-sdk/           # Python: Plugin toolkit (@tool, ToolContext)
 │   ├── auth-service/        # Java: RS256 JWT auth + JWKS + policy ACM
 │   ├── memory-server/       # Java: TF-IDF search + Redis cache + multi-tenant
 │   ├── codeexec-server/     # Java: Docker-isolated code execution
 │   ├── filesearch-server/   # Java: Sandboxed file operations
-│   ├── completion-server/   # Java: FIM code completion service
 │   ├── model-router/        # Java: LLM model routing + fallback
-│   ├── review-agent/        # Java: Spring AI code review agent
 │   ├── eval-harness/        # Python: 3-axis eval + controlled experiments
 │   ├── mcp-common/          # Java: Shared security lib
-│   ├── common-spi/          # Java: Service discovery SPI
-│   ├── mcp-cli/             # TypeScript: CLI tools + memory management
-│   ├── frontend/            # React 19 + Vite
-│   └── docs/                # Design documents + API reference
+│   ├── common-spi/          # Java: SPI interfaces
+│   └── frontend/            # React 19 + Vite
 ├── src/                     # TypeScript MCP servers (stdio)
 ├── tools/                   # TypeScript: memory-ts
 ├── Makefile

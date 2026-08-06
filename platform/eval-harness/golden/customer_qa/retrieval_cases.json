@@ -1,0 +1,8 @@
+[
+  {"id":"returns_policy","query":"How do returns and refunds work?","expected_sources":["returns-and-refunds.md"],"hard_negative_sources":["shipping-status.md"]},
+  {"id":"refund_request","query":"I want a refund for an online purchase","expected_sources":["returns-and-refunds.md"],"hard_negative_sources":["address-changes.md"]},
+  {"id":"package_status","query":"Where is my package and how can I track it?","expected_sources":["shipping-status.md"],"hard_negative_sources":["returns-and-refunds.md"]},
+  {"id":"change_address","query":"How do I change my mailing address?","expected_sources":["address-changes.md"],"hard_negative_sources":["shipping-status.md"]},
+  {"id":"missing_order","query":"Can you tell me the status of order 12345?","expected_sources":[],"hard_negative_sources":["shipping-status.md"]},
+  {"id":"missing_account","query":"Please update my account address now","expected_sources":[],"hard_negative_sources":["address-changes.md"]}
+]

@@ -63,12 +63,16 @@ public class AgentService {
         String model = request.model();
         String userInput = request.lastUserMessage();
 
-        log.info("📩 User message received [session={}, model={}]: {}", sessionId, model,
+        log.info("📩 收到用户消息 [session={}, model={}]: {}", sessionId, model,
                 userInput.length() > 120 ? userInput.substring(0, 120) + "..." : userInput);
 
         return Flux.concat(
-                // Save user message
-                conversationStore.append(sessionId, new Message("user", userInput)).thenMany(Flux.empty()),
+                // Save user message. The explicit type parameter matters: a bare
+                // Flux.empty() infers Flux<Object>, which drags the whole
+                // Flux.concat(...) inference down to Flux<Object> and fails to
+                // match the declared Flux<ServerSentEvent<String>> return type.
+                conversationStore.append(sessionId, new Message("user", userInput))
+                        .thenMany(Flux.<ServerSentEvent<String>>empty()),
 
                 // Emit "thinking" status
                 Flux.just(SseEventBuilder.status("thinking", Map.of(

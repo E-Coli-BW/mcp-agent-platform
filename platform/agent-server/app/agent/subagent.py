@@ -534,6 +534,7 @@ def _build_child_agent(
     from app.agent.graph import _create_chat_model, _truncate_tool_output
     from app.config import settings
     from app.registry.tool_registry import resolve_tools
+    from app.runtime.tool_authorization import wrap_tool_with_authorization
 
     # Resolve the tools the parent requested. resolve_tools enforces the
     # registry check (UnknownToolError if the parent asked for a tool that
@@ -544,7 +545,8 @@ def _build_child_agent(
 
     # Reuse the parent's truncation wrapper for output limiting.
     max_output = getattr(settings, "max_tool_output", 4000)
-    wrapped = [_truncate_tool_output(t, max_output) for t in resolved]
+    truncated = [_truncate_tool_output(t, max_output) for t in resolved]
+    wrapped = [wrap_tool_with_authorization(t) for t in truncated]
 
     model = _create_chat_model(model_name)
 

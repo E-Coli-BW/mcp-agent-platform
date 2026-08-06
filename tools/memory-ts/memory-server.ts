@@ -4,26 +4,26 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Cross-session persistent memory system exposed to all AI clients via MCP.
- * Cross-session persistent memory system, exposed to all AI clients via the MCP protocol.
+ * 跨会话持久化记忆系统，通过 MCP 协议暴露给所有 AI 客户端。
  *
- * Philosophy: "Store everything, retrieve on demand, let LLM decide"
- *                        "Store everything, retrieve on demand, let the LLM decide"
- * Forgetting model: Ebbinghaus forgetting curve R = e^(-t/S)
+ * Philosophy / 设计哲学: "Store everything, retrieve on demand, let LLM decide"
+ *                        "全量存储，按需检索，LLM 做决策"
+ * Forgetting model / 遗忘模型: Ebbinghaus forgetting curve R = e^(-t/S)
  *
- * Module structure:
- *   memory/types.ts           — Type definitions
- *   memory/persistence.ts     — Store / Health / WAL / Config persistence
- *   memory/forgetting-curve.ts — Ebbinghaus forgetting curve algorithm
- *   memory/search.ts          — TF-IDF search + retention weighting
- *   memory/health.ts          — Health diagnostics
- *   memory/importers.ts       — Copilot Sessions / Project Knowledge import
- *   memory-server.ts          — MCP Tool registration + entry point (this file)
+ * Module structure / 模块结构:
+ *   memory/types.ts           — Type definitions / 类型定义
+ *   memory/persistence.ts     — Store / Health / WAL / Config persistence / 持久化
+ *   memory/forgetting-curve.ts — Ebbinghaus forgetting curve / 遗忘曲线算法
+ *   memory/search.ts          — TF-IDF search + retention weighting / 搜索引擎
+ *   memory/health.ts          — Health diagnostics / 健康诊断
+ *   memory/importers.ts       — Copilot Sessions / Project Knowledge import / 导入
+ *   memory-server.ts          — MCP Tool registration + entry point / 入口 (本文件)
  *
- * Safety:
- *   - NO automatic deletion — forgetting curve is diagnostic only
- *   - Pinned memories are immune to decay (retention = 1.0 always)
- *   - >70% forgotten triggers safe mode (no bulk delete suggestion) / safety valve against accidental deletion
- *   - WAL protects against server crash mid-write
+ * Safety / 安全性:
+ *   - NO automatic deletion — forgetting curve is diagnostic only / 绝不自动删除
+ *   - Pinned memories are immune to decay (retention = 1.0 always) / pinned 永不衰减
+ *   - >70% forgotten triggers safe mode (no bulk delete suggestion) / 安全阀防误删
+ *   - WAL protects against server crash mid-write / WAL 防中断丢数据
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -406,17 +406,17 @@ server.tool(
           action: "MERGE", description: `"${g.namespace}" prefix "${g.prefix}": ${g.keys.length} entries (${g.totalChars} chars)`,
           keys: g.keys,
         })),
-        // Safety valve: if >70% of memories are forgotten, they're most likely long-unused — bulk deletion is not advised
+        // 安全阀: 如果 >70% 记忆都 forgotten，大概率是长期未使用，不建议批量删除
         deleteCandidates: (forgotten.length / Math.max(entries.length, 1)) > 0.7
-          ? { safeMode: true, message: `${forgotten.length}/${entries.length} are already forgotten (likely long-unused); pin important memories with memory_pin() before cleaning up`, keys: [] }
+          ? { safeMode: true, message: `${forgotten.length}/${entries.length} 条都已 forgotten (可能是长期未使用)，建议先 memory_pin() 重要记忆再清理`, keys: [] }
           : { safeMode: false, keys: forgotten.filter((r) => !r.pinned).map((r) => r.key) },
       },
       diagnostics: diagnoseHealth(store, config),
       compactHistory: health.compactHistory.slice(-3),
       isDryRun,
       nextStep: isDryRun
-        ? "Please review the plan. Once you agree, call memory_compact_execute(deleteKeys=[...], mergeOperations=[...]). You can protect important memories first with memory_pin(key)."
-        : "Plan generated, awaiting confirmation.",
+        ? "请审查方案。同意后调用 memory_compact_execute(deleteKeys=[...], mergeOperations=[...])。重要记忆可先 memory_pin(key) 保护。"
+        : "方案已生成，等待确认。",
     };
 
     return textResult(`📋 Memory Compact Plan:\n\n${JSON.stringify(plan, null, 2)}`);

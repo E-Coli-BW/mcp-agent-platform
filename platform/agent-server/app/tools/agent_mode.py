@@ -15,9 +15,17 @@ Security model (review findings C1 + C2):
 """
 
 import os
+import asyncio
+from dataclasses import replace
 from pathlib import Path
 from langchain_core.tools import tool
 
+from app.context.request_context import get_request_context
+from app.runtime.idempotency import (
+    IdempotencyDecision,
+    get_idempotency_store,
+)
+from app.runtime.tool_invocation import make_tool_invocation_envelope
 from app.tools.workspace_resolver import (
     WorkspacePathError,
     get_resolver,
@@ -81,25 +89,220 @@ def _safe_workspace_path(path: str) -> str:
     return validate_path(path, root)
 
 
+def _run_async_from_sync(coro):
+    """Run an async helper from sync tool code when no loop is active."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    coro.close()
+    return None
+
+
+def _run_idempotent_mutation(tool_name: str, arguments: dict, operation) -> str:
+    """Run a mutating tool through the shared runtime idempotency contract."""
+    req_ctx = get_request_context()
+    if not req_ctx.run_id:
+        return operation()
+
+    tenant_id = _current_tenant_id() or "default"
+    store = get_idempotency_store()
+    envelope = make_tool_invocation_envelope(
+        run_id=req_ctx.run_id,
+        request_id=req_ctx.request_id,
+        session_id=req_ctx.session_id,
+        tenant_id=tenant_id,
+        step_seq=1,
+        tool_name=tool_name,
+        arguments=arguments,
+    )
+    envelope = replace(
+        envelope,
+        idempotency_key=f"tool-{tool_name}:{req_ctx.run_id}:{envelope.args_hash}",
+    )
+    claim = _run_async_from_sync(store.claim(
+        idempotency_key=envelope.idempotency_key,
+        args_hash=envelope.args_hash,
+        invocation=envelope.to_event_payload(),
+    ))
+    if claim is not None:
+        if claim.decision == IdempotencyDecision.REPLAY_SUCCESS:
+            return str(claim.record.result)
+        if claim.decision == IdempotencyDecision.IN_PROGRESS:
+            return f"⏳ Duplicate {tool_name} is already processing; retry later."
+        if claim.decision == IdempotencyDecision.CONFLICT:
+            return "❌ Idempotency conflict: same step was used with different arguments."
+        if claim.decision == IdempotencyDecision.REPLAY_FAILED:
+            return f"❌ Previous {tool_name} failed: {claim.record.error_message or 'unknown error'}"
+
+    try:
+        result = operation()
+        if str(result).startswith("❌"):
+            _run_async_from_sync(store.fail(
+                envelope.idempotency_key,
+                error_class="ToolResultError",
+                error_message=str(result),
+            ))
+        else:
+            _run_async_from_sync(store.complete(envelope.idempotency_key, result))
+        return result
+    except Exception as exc:
+        _run_async_from_sync(store.fail(
+            envelope.idempotency_key,
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        ))
+        return f"❌ {tool_name} failed: {exc}"
+
+
+async def run_idempotent_async_mutation(tool_name: str, arguments: dict, operation) -> str:
+    """Async counterpart for remote mutating/execute tools."""
+    req_ctx = get_request_context()
+    if not req_ctx.run_id:
+        return await operation()
+
+    tenant_id = _current_tenant_id() or "default"
+    store = get_idempotency_store()
+    envelope = make_tool_invocation_envelope(
+        run_id=req_ctx.run_id,
+        request_id=req_ctx.request_id,
+        session_id=req_ctx.session_id,
+        tenant_id=tenant_id,
+        step_seq=1,
+        tool_name=tool_name,
+        arguments=arguments,
+    )
+    envelope = replace(
+        envelope,
+        idempotency_key=f"tool-{tool_name}:{req_ctx.run_id}:{envelope.args_hash}",
+    )
+    claim = await store.claim(
+        idempotency_key=envelope.idempotency_key,
+        args_hash=envelope.args_hash,
+        invocation=envelope.to_event_payload(),
+    )
+    if claim.decision == IdempotencyDecision.REPLAY_SUCCESS:
+        return str(claim.record.result)
+    if claim.decision == IdempotencyDecision.IN_PROGRESS:
+        return f"⏳ Duplicate {tool_name} is already processing; retry later."
+    if claim.decision == IdempotencyDecision.CONFLICT:
+        return "❌ Idempotency conflict: same step was used with different arguments."
+    if claim.decision == IdempotencyDecision.REPLAY_FAILED:
+        return f"❌ Previous {tool_name} failed: {claim.record.error_message or 'unknown error'}"
+
+    try:
+        result = await operation()
+        if str(result).startswith("❌"):
+            await store.fail(
+                envelope.idempotency_key,
+                error_class="ToolResultError",
+                error_message=str(result),
+            )
+        else:
+            await store.complete(envelope.idempotency_key, result)
+        return result
+    except Exception as exc:
+        await store.fail(
+            envelope.idempotency_key,
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
+        return f"❌ {tool_name} failed: {exc}"
+
+
 @tool
 def file_write(path: str, content: str) -> str:
     """Write content to a file. Creates parent directories if needed. Path is relative to workspace root."""
+    req_ctx = get_request_context()
+    tenant_id = _current_tenant_id() or "default"
+    idempotency_store = get_idempotency_store()
+    idempotency_key = ""
+    args_hash = ""
+
+    # Runtime enforcement is enabled only inside an active request/run. Direct
+    # unit tests and local scripts without request context keep legacy behavior.
+    if req_ctx.run_id:
+        envelope = make_tool_invocation_envelope(
+            run_id=req_ctx.run_id,
+            request_id=req_ctx.request_id,
+            session_id=req_ctx.session_id,
+            tenant_id=tenant_id,
+            step_seq=1,
+            tool_name="file_write",
+            arguments={"path": path, "content": content},
+        )
+        args_hash = envelope.args_hash
+        # This local sync tool cannot see LangGraph's actual tool-call seq.
+        # Use run+tool+args_hash for the first enforcement slice so identical
+        # retries are deduped without blocking distinct file writes in one run.
+        idempotency_key = f"tool-file_write:{req_ctx.run_id}:{args_hash}"
+
+        # LangChain sync tools usually run in a worker thread. If a caller
+        # invokes this from an active event loop, skip enforcement for now; a
+        # later async tool wrapper will remove this escape hatch.
+        claim = _run_async_from_sync(
+            idempotency_store.claim(
+                idempotency_key=idempotency_key,
+                args_hash=args_hash,
+                invocation=envelope.to_event_payload(),
+            )
+        )
+
+        if claim is not None:
+            if claim.decision == IdempotencyDecision.REPLAY_SUCCESS:
+                return str(claim.record.result)
+            if claim.decision == IdempotencyDecision.IN_PROGRESS:
+                return "⏳ Duplicate file_write is already processing; retry later."
+            if claim.decision == IdempotencyDecision.CONFLICT:
+                return "❌ Idempotency conflict: same key was used with different arguments."
+            if claim.decision == IdempotencyDecision.REPLAY_FAILED:
+                return f"❌ Previous file_write failed: {claim.record.error_message or 'unknown error'}"
+
     try:
         resolved = _safe_workspace_path(path)
         os.makedirs(os.path.dirname(resolved), exist_ok=True)
         with open(resolved, 'w') as f:
             f.write(content)
         lines = content.count('\n') + 1
-        return f"✅ Written {lines} lines to {path}"
+        result = f"✅ Written {lines} lines to {path}"
+        if idempotency_key:
+            _run_async_from_sync(idempotency_store.complete(idempotency_key, result))
+        return result
     except WorkspacePathError as e:
-        return f"❌ {e}"
+        result = f"❌ {e}"
+        if idempotency_key:
+            _run_async_from_sync(
+                idempotency_store.fail(
+                    idempotency_key,
+                    error_class=e.__class__.__name__,
+                    error_message=str(e),
+                )
+            )
+        return result
     except Exception as e:
-        return f"❌ Failed to write {path}: {e}"
+        result = f"❌ Failed to write {path}: {e}"
+        if idempotency_key:
+            _run_async_from_sync(
+                idempotency_store.fail(
+                    idempotency_key,
+                    error_class=e.__class__.__name__,
+                    error_message=str(e),
+                )
+            )
+        return result
 
 
 @tool
 def file_edit(path: str, old_text: str, new_text: str) -> str:
     """Replace old_text with new_text in a file. Like search-and-replace. Use this for precise edits."""
+    return _run_idempotent_mutation(
+        "file_edit",
+        {"path": path, "old_text": old_text, "new_text": new_text},
+        lambda: _file_edit_impl(path, old_text, new_text),
+    )
+
+
+def _file_edit_impl(path: str, old_text: str, new_text: str) -> str:
     try:
         resolved = _safe_workspace_path(path)
         if not os.path.exists(resolved):
@@ -189,6 +392,14 @@ def git_diff() -> str:
 @tool
 def git_commit(message: str) -> str:
     """Stage all changes and commit with the given message."""
+    return _run_idempotent_mutation(
+        "git_commit",
+        {"message": message},
+        lambda: _git_commit_impl(message),
+    )
+
+
+def _git_commit_impl(message: str) -> str:
     try:
         import subprocess
         root = _ensure_workspace()
@@ -216,6 +427,14 @@ def git_commit(message: str) -> str:
 def run_tests(test_command: str | None = None) -> str:
     """Run tests in the workspace. Auto-detects project type (pytest/mvn/npm) if no command given.
     Use this after file_write or file_edit to verify changes don't break anything."""
+    return _run_idempotent_mutation(
+        "run_tests",
+        {"test_command": test_command or ""},
+        lambda: _run_tests_impl(test_command),
+    )
+
+
+def _run_tests_impl(test_command: str | None = None) -> str:
     try:
         import subprocess
         root = _ensure_workspace()

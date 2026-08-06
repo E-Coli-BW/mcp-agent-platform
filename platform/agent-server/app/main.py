@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -157,6 +157,28 @@ async def health():
     return {"status": "ok", "model": settings.default_model}
 
 
+@app.get("/api/agents")
+async def list_agents():
+    """Return the UI-safe catalog of configured agents.
+
+    Prompts, tool names, and routing policy stay server-side. The frontend only
+    needs stable identity and presentation metadata for switching sessions.
+    """
+    from app.registry.config_loader import load_all_configs
+
+    configs = load_all_configs(settings.agent_config_dir)
+    return {
+        "data": [
+            {
+                "id": config.id,
+                "name": config.name,
+                "description": config.description,
+            }
+            for config in sorted(configs.values(), key=lambda item: item.name)
+        ]
+    }
+
+
 @app.get("/metrics")
 async def metrics():
     """Prometheus-style metrics for monitoring dashboards."""
@@ -191,6 +213,29 @@ async def usage():
     return get_usage_tracker().get_summary()
 
 
+@app.post("/api/feedback")
+async def record_feedback(request: Request):
+    """Persist explicit user feedback for offline review and evaluation."""
+    body = await request.json()
+    rating = body.get("rating")
+    if rating not in {"positive", "negative"}:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="rating must be positive or negative")
+    from app.feedback.store import FEEDBACK_FILE, record_user_feedback
+    entry = record_user_feedback(
+        rating=rating,
+        reason=body.get("reason"),
+        agent=body.get("agent"),
+        session_id=body.get("session_id"),
+        run_id=body.get("run_id"),
+        message_id=body.get("message_id"),
+        retrieval_trace_ids=body.get("retrieval_trace_ids", []),
+        model=body.get("model"),
+        answer_preview=str(body.get("answer", ""))[:500],
+    )
+    return {"ok": True, "persisted": str(FEEDBACK_FILE), "feedback": entry}
+
+
 @app.get("/api/reranker")
 async def reranker_info():
     """Learned reranker weights and feedback stats."""
@@ -200,11 +245,56 @@ async def reranker_info():
 
 @app.post("/api/reranker/retrain")
 async def reranker_retrain():
-    """Trigger retraining of reranker weights from accumulated feedback."""
+    """Build a candidate reranker artifact; promotion is a separate action."""
     from app.rag.reranking.learned import get_learned_reranker
     r = get_learned_reranker()
-    r.retrain(min_samples=5)
-    return {"status": "retrained", **r.get_weights_info()}
+    candidate = r.retrain(min_samples=5, promote=False)
+    return {"status": "candidate_created", "candidate": candidate, **r.get_weights_info()}
+
+
+@app.post("/api/reranker/promote")
+async def reranker_promote():
+    """Promote a reviewed candidate reranker and retain rollback state."""
+    from app.rag.reranking.learned import get_learned_reranker
+    r = get_learned_reranker()
+    try:
+        candidate = r.promote_candidate()
+    except FileNotFoundError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"status": "promoted", "candidate": candidate, **r.get_weights_info()}
+
+
+@app.post("/api/reranker/rollback")
+async def reranker_rollback():
+    """Restore the previous promoted reranker artifact."""
+    from app.rag.reranking.learned import get_learned_reranker
+    r = get_learned_reranker()
+    try:
+        previous = r.rollback_weights()
+    except FileNotFoundError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"status": "rolled_back", "weights": previous, **r.get_weights_info()}
+
+
+@app.post("/api/reranker/promote-gated")
+async def reranker_promote_gated(request: Request):
+    """Promote only with a supplied held-out evaluation and minimum lift."""
+    from app.rag.reranking.learned import get_learned_reranker
+    body = await request.json()
+    try:
+        candidate = get_learned_reranker().promote_candidate_if_better(
+            body.get("evaluation", {}),
+            min_improvement=float(body.get("min_improvement", 0.0)),
+        )
+    except FileNotFoundError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"status": "promoted", "candidate": candidate}
 
 
 @app.get("/api/reranker/evaluate")

@@ -13,12 +13,15 @@ class AgentConfig:
 
     id: str
     name: str
+    description: str = ""
     version: str = "1.0"
     model: str = "qwen2.5:7b"
     prompt: str = ""
     tools: list[str] = field(default_factory=list)
     guardrails: dict = field(default_factory=dict)
     routing: dict = field(default_factory=dict)
+    knowledge: dict = field(default_factory=dict)
+    runtime: dict = field(default_factory=dict)
 
 
 def load_agent_config(path: str) -> AgentConfig:
@@ -30,12 +33,15 @@ def load_agent_config(path: str) -> AgentConfig:
     return AgentConfig(
         id=raw["id"],
         name=raw["name"],
+        description=raw.get("description", ""),
         version=raw.get("version", "1.0"),
         model=raw.get("model", "qwen2.5:7b"),
         prompt=raw.get("prompt", ""),
         tools=raw.get("tools", []),
         guardrails=raw.get("guardrails", {}),
         routing=raw.get("routing", {}),
+        knowledge=raw.get("knowledge", {}),
+        runtime=raw.get("runtime", {}),
     )
 
 

@@ -1,8 +1,8 @@
 """Tests for n-of-k aggregation (CaseAggregate) — pure logic, no agent.
 
-These tests pin down the contract that a single LLM-in-the-loop verdict is
-a coin flip; only k/N pass-rates are evidence. The CaseAggregate type
-formalises that contract.
+These tests pin down the contract from `skill-engineering-effect-eval-iteration`:
+a single LLM-in-the-loop verdict is a coin flip; only k/N pass-rates are
+evidence. The CaseAggregate type formalises that contract.
 
 Three layers exercised:
   1. Threshold resolution (CLI > per-case > default)

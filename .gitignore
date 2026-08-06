@@ -4,6 +4,7 @@
 **/*.egg-info/
 **/node_modules/
 **/.venv/
+**/.runtime/
 **/tmp-m2-repo/
 .idea/
 .vscode/

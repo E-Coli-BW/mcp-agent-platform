@@ -19,8 +19,8 @@ different prompts, different visibility scopes. A subagent answer
 making it back to the parent has been through both: the parent's
 critic later, and a verifier just now.
 
-WHY this design:
-==========================================
+WHY this design (operational rationale):
+========================================
 
 1. SEPARATE FROM C1, not shared.
    The C1 critic sees the user's question + the agent's final answer.

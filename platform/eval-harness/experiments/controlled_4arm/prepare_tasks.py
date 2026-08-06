@@ -84,7 +84,7 @@ def heuristic_rewrite(commit_msg: str) -> str:
     # Strip "fix(scope): " or "feat(scope): "
     m = re.match(r"^(fix|feat|refactor|test|docs|chore)(\([^)]+\))?:\s*(.+)$", commit_msg)
     body = m.group(3) if m else commit_msg
-    return f"We hit a problem: {body}. Please help me locate and fix it."
+    return f"我们遇到一个问题: {body}。请帮我定位并修复。"
 
 
 def llm_rewrite(commit_msg: str, files: list[str]) -> str:
@@ -100,22 +100,22 @@ def llm_rewrite(commit_msg: str, files: list[str]) -> str:
     # just wouldn't know "edit JwtConfig.java line 47".
     files_summary = "\n".join(f"  - {f}" for f in files[:5])
 
-    prompt = f"""You are a user-support engineer. Below is a commit message submitted by a developer, describing a fix or a new feature.
+    prompt = f"""你是一个用户支持工程师。下面是一条开发者提交的 commit message,描述了一个修复或新功能。
 
-**Back-translate** it into "what the user would have said when first making the request".
+请把它**反向翻译**成"用户最初提需求时会说的话"。
 
-Strict rules:
-1. **Describe only the symptoms of the problem**; don't say how to change it, which file, or which line
-2. **Don't mention** any specific class name, function name, variable name, or config key
-3. A single sentence, within 80 characters
-4. Start with "I" or "we", mimicking the user's tone
-5. Give the back-translation directly, without any explanation or prefix
+严格规则:
+1. **只描述问题症状**,不要说怎么改、改哪个文件、改哪一行
+2. **不要提**任何具体的类名、函数名、变量名、配置键名
+3. 一句话中文,80 字以内
+4. 用"我"或"我们"开头,模拟用户口吻
+5. 直接给出反译,不要加任何解释或前缀
 
 Commit message: {commit_msg}
-Files involved (for your context only — don't mention them directly): 
+涉及文件 (只供你了解上下文,不要直接提):
 {files_summary}
 
-Back-translation:"""
+反译:"""
 
     try:
         import httpx
@@ -127,8 +127,8 @@ Back-translation:"""
         )
         r.raise_for_status()
         text = r.json().get("response", "").strip()
-        # Defensive: strip leading quotes / "Back-translation:" if model echoed
-        text = re.sub(r'^["\']*Back-translation:?\s*', "", text)
+        # Defensive: strip leading quotes / "反译:" if model echoed
+        text = re.sub(r'^["「『]*反译[::]?\s*', "", text)
         text = re.sub(r'^["「『]+|["」』]+$', "", text)
         return text[:200]  # safety cap
     except Exception as e:

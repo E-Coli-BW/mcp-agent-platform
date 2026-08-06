@@ -121,7 +121,7 @@ public class MemoryEntity {
     public Long getVersion() { return version; }
 
     /**
-     * Alibaba OOP #12: POJO classes must implement a toString method.
+     * Alibaba OOP #12: POJO类必须写toString方法.
      * Truncates content to 100 chars for log readability.
      */
     @Override

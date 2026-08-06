@@ -6,8 +6,8 @@ React 19 + TypeScript + Vite + Tailwind CSS frontend for the MCP Coding Agent pl
 
 ```bash
 cd platform/frontend
-npm install --registry=https://registry.npmmirror.com   # or just: npm install
-npm run dev                                              # → http://localhost:3000
+npm ci --workspaces=false
+npm run dev                          # → http://localhost:3000
 ```
 
 ## Full End-to-End Testing
@@ -34,7 +34,6 @@ Verify: `curl http://localhost:8090/auth/health` → `{"status":"UP"}`
 
 ```bash
 cd platform/agent-server
-source .venv/bin/activate
 source .venv/bin/activate        # IMPORTANT: must use project venv, not system Python
 .venv/bin/uvicorn app.main:app --port 8580 --reload
 ```
@@ -54,11 +53,12 @@ Open http://localhost:3000 in your browser.
 
 1. **Sign up**: Click "Sign up" → enter username, password (8+ chars), tenant ID → Create Account
 2. **Auto-login**: You'll be redirected to the IDE after signup
-3. **Open workspace**: Type a path (e.g., `~/projects/my-app`) → click Open
+3. **Open workspace**: Click Browse to select an existing server folder, or type its path and click Go
 4. **Browse files**: Click files in the sidebar to open in Monaco editor
 5. **Chat**: Type a message in the chat panel → see streaming response
-6. **Logout**: Click Logout in header → token is blacklisted, redirected to login
-7. **Session restore**: Refresh the page → auto-refreshes token, returns to IDE
+6. **Approve tools**: For gated operations, review the approval card and choose Approve or Reject before any side effect runs
+7. **Logout**: Click Logout in header → token is blacklisted, redirected to login
+8. **Session restore**: Refresh the page → auto-refreshes token, returns to IDE
 
 ### Quick test (auth only, no agent needed)
 
@@ -103,13 +103,14 @@ src/
 ├── components/
 │   ├── AuthGuard.tsx         — Route guard (redirect to /login if unauthenticated)
 │   ├── Layout.tsx            — App shell: header bar with user/role + logout
-│   ├── FileTree.tsx          — Workspace file explorer with directory tree
+│   ├── FileTree.tsx          — Workspace tree + server-side directory browser
 │   ├── CodeEditor.tsx        — Monaco editor with multi-tab support
-│   └── ChatPanel.tsx         — SSE streaming chat with tool call chips
+│   ├── ChatPanel.tsx         — SSE chat, reasoning/errors, and approval controls
+│   └── ToolBlock.tsx         — Collapsible tool invocation and result view
 ├── pages/
 │   ├── LoginPage.tsx         — Login form with error handling + loading state
 │   ├── SignupPage.tsx        — Registration form with auto-login
-│   └── IdePage.tsx           — IDE layout: FileTree + CodeEditor + ChatPanel
+│   └── IdePage.tsx           — Resizable three-column IDE layout
 ├── App.tsx                   — Router: /login, /signup, /ide (protected)
 └── main.tsx                  — Entry point
 ```

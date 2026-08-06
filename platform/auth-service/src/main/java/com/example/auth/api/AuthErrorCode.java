@@ -3,7 +3,7 @@ package com.example.auth.api;
 /**
  * OAuth2/auth error codes — eliminates magic strings in controllers.
  *
- * <p>Alibaba Constant Definition #1: magic values must not appear directly in code</p>
+ * <p>Alibaba 常量定义 #1: 不允许魔法值直接出现在代码中</p>
  */
 public final class AuthErrorCode {
 

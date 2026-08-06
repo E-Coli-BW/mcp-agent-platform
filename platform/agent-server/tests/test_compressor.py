@@ -1,13 +1,12 @@
 """Tests for context compression logic."""
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agent.compressor import (
     InvestigationState,
     compress_messages,
+    estimate_chars,
     estimate_tokens,
-    make_context_compressor_node,
     update_investigation_from_messages,
 )
 
@@ -21,11 +20,18 @@ class TestEstimateTokens:
         msgs = [HumanMessage(content="hello world")]  # 11 chars → 2 tokens
         assert estimate_tokens(msgs) == 2
 
+    def test_character_estimation_includes_tool_calls(self):
+        message = AIMessage(
+            content="",
+            tool_calls=[{"id": "1", "name": "read_file", "args": {}}],
+        )
+        assert estimate_chars([message]) > 0
+
 
 class TestCompressMessages:
     def test_noop_when_under_budget(self):
         msgs = [HumanMessage(content="hello")]
-        result, summary = compress_messages(msgs, budget_tokens=1000)
+        result, summary = compress_messages(msgs, budget_chars=4000)
         assert result == msgs
         assert summary == ""
 
@@ -46,7 +52,7 @@ class TestCompressMessages:
             AIMessage(content="Fixed!"),
         ]
         # Budget that forces compression of middle
-        result, summary = compress_messages(msgs, budget_tokens=500)
+        result, summary = compress_messages(msgs, budget_chars=2000)
         # Should be shorter than original
         assert estimate_tokens(result) < estimate_tokens(msgs)
 
@@ -71,7 +77,7 @@ class TestCompressMessages:
             HumanMessage(content="finish"),
             AIMessage(content="done"),
         ]
-        result, _ = compress_messages(msgs, budget_tokens=500)
+        result, _ = compress_messages(msgs, budget_chars=2000)
         # The skill activation in middle should be compressed to a reference
         tool_msgs = [m for m in result if isinstance(m, ToolMessage) and "skill" in (m.content or "").lower()]
         assert len(tool_msgs) > 0
@@ -93,7 +99,7 @@ class TestCompressMessages:
             HumanMessage(content="e"),
             AIMessage(content="f"),
         ]
-        result, summary = compress_messages(msgs, budget_tokens=200)
+        result, summary = compress_messages(msgs, budget_chars=800)
         tool_msgs = [m for m in result if isinstance(m, ToolMessage)]
         if tool_msgs:
             # Should be truncated to first line
@@ -106,10 +112,43 @@ class TestCompressMessages:
             msgs.append(AIMessage(content=f"thinking {i}" * 50, tool_calls=[{"id": str(i), "name": "t", "args": {}}]))
             msgs.append(ToolMessage(content=f"result {i}" * 100, tool_call_id=str(i), name="t", id=f"t{i}"))
 
-        result, _ = compress_messages(msgs, budget_tokens=500)
+        result, _ = compress_messages(msgs, budget_chars=5000)
         # First message preserved
         assert isinstance(result[0], HumanMessage)
         assert "Fix the NPE" in result[0].content
+
+    def test_keeps_investigation_facts_while_dropping_middle(self):
+        msgs = [HumanMessage(content="fix the bug")]
+        msgs.extend(AIMessage(content="middle" * 200) for _ in range(5))
+        msgs.extend(AIMessage(content="recent" * 15) for _ in range(6))
+        investigation = InvestigationState(confirmed_facts=["root cause confirmed"])
+
+        compression = compress_messages(
+            msgs,
+            budget_chars=900,
+            investigation=investigation,
+        )
+        result = compression.messages
+
+        assert compression.overflow is False
+        assert estimate_chars(result) <= 900
+        assert any("root cause confirmed" in str(message.content) for message in result)
+
+    def test_reports_overflow_when_required_floor_exceeds_budget(self):
+        msgs = [HumanMessage(content="goal")]
+        msgs.extend(AIMessage(content="x" * 1000) for _ in range(6))
+
+        compression = compress_messages(msgs, budget_chars=300)
+
+        assert compression.overflow is True
+        assert compression.used_chars > compression.budget_chars
+
+    def test_short_history_does_not_duplicate_original_goal(self):
+        msgs = [HumanMessage(id="goal", content="x" * 1000)]
+
+        compression = compress_messages(msgs, budget_chars=300)
+
+        assert [message.id for message in compression.messages] == ["goal"]
 
 
 class TestInvestigationState:
@@ -174,15 +213,3 @@ class TestUpdateInvestigation:
         state = update_investigation_from_messages(state, msgs)
         assert len(state.confirmed_facts) == 1
         assert "race condition" in state.confirmed_facts[0]
-
-
-class TestContextCompressorNode:
-    def test_noop_when_under_threshold(self):
-        """Should return empty dict when under budget."""
-
-        class FakeState:
-            messages = [HumanMessage(content="hi")]
-
-        node = make_context_compressor_node(budget_tokens=1000, threshold=0.75)
-        result = node(FakeState())
-        assert result == {}

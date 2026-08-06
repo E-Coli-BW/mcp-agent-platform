@@ -1,19 +1,26 @@
 """Tests for agent_mode tools — file_write, file_edit, git operations."""
 
-import os
+import asyncio
 import subprocess
 import pytest
 
 from app.tools.agent_mode import (
-    set_workspace_root, get_workspace_root,
-    file_write, file_edit, git_status, git_diff, git_commit,
+    set_workspace_root,
+    file_write, file_edit, git_status, git_commit,
 )
+from app.context.request_context import set_request_context
+from app.runtime import reset_idempotency_store_for_tests
 
 
 @pytest.fixture(autouse=True)
 def workspace(tmp_path):
+    set_request_context("", "", "")
+
+    asyncio.run(reset_idempotency_store_for_tests())
     set_workspace_root(str(tmp_path))
     yield tmp_path
+    set_request_context("", "", "")
+    asyncio.run(reset_idempotency_store_for_tests())
 
 
 class TestFileWrite:
@@ -41,6 +48,16 @@ class TestFileWrite:
         result = file_write.invoke({"path": "multi.py", "content": "a\nb\nc\n"})
         assert "4 lines" in result  # 3 newlines + 1
 
+    def test_write_replays_without_second_side_effect_inside_run(self, workspace):
+        set_request_context("req-1", "run-1", "tenant:s1")
+
+        first = file_write.invoke({"path": "hello.py", "content": "print('hello')\n"})
+        (workspace / "hello.py").write_text("external change\n")
+        second = file_write.invoke({"path": "hello.py", "content": "print('hello')\n"})
+
+        assert first == second
+        assert (workspace / "hello.py").read_text() == "external change\n"
+
 
 class TestFileEdit:
     def test_edit_replaces_text(self, workspace):
@@ -53,6 +70,15 @@ class TestFileEdit:
         (workspace / "dup.py").write_text("x = 1\nx = 1\n")
         file_edit.invoke({"path": "dup.py", "old_text": "x = 1", "new_text": "x = 2"})
         assert (workspace / "dup.py").read_text() == "x = 2\nx = 1\n"
+
+    def test_edit_replays_without_second_side_effect_inside_run(self, workspace):
+        set_request_context("req-1", "run-1", "tenant:s1")
+        (workspace / "app.py").write_text("old\n")
+        first = file_edit.invoke({"path": "app.py", "old_text": "old", "new_text": "new"})
+        (workspace / "app.py").write_text("external\n")
+        second = file_edit.invoke({"path": "app.py", "old_text": "old", "new_text": "new"})
+        assert first == second
+        assert (workspace / "app.py").read_text() == "external\n"
 
     def test_edit_text_not_found(self, workspace):
         (workspace / "app.py").write_text("hello world\n")
@@ -90,3 +116,14 @@ class TestGitOps:
         subprocess.run(["git", "config", "user.name", "Test"], cwd=str(workspace), capture_output=True)
         result = git_commit.invoke({"message": "empty"})
         assert "Nothing" in result or "clean" in result.lower()
+
+    def test_git_commit_replays_without_second_commit(self, workspace):
+        set_request_context("req-1", "run-1", "tenant:s1")
+        subprocess.run(["git", "init"], cwd=str(workspace), capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(workspace), capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(workspace), capture_output=True)
+        (workspace / "init.py").write_text("# init\n")
+        first = git_commit.invoke({"message": "initial commit"})
+        second = git_commit.invoke({"message": "initial commit"})
+        assert first == second
+        assert len(list(workspace.joinpath(".git", "objects").rglob("*"))) > 0

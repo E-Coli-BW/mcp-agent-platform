@@ -1,5 +1,5 @@
 /**
- * Core type definitions
+ * Core type definitions / 核心类型定义
  */
 
 // ─── Memory Entry ────────────────────────────────────────────────────────────
@@ -13,10 +13,10 @@ export interface MemoryEntry {
   updatedAt: string;
   accessCount: number;
   /** Last time this entry was accessed via memory_get / memory_search hit
-   *  Timestamp of the last memory_get / memory_search hit */
+   *  上次被 memory_get / memory_search 命中的时间 */
   lastAccessedAt: string | null;
   /** Pinned memories are immune to the forgetting curve and never auto-suggested for deletion
-   *  Memories marked pinned are never decayed or suggested for deletion by the forgetting curve */
+   *  标记为 pinned 的记忆永不被遗忘曲线衰减或建议删除 */
   pinned?: boolean;
 }
 
@@ -25,7 +25,7 @@ export interface MemoryStore {
   entries: Record<string, MemoryEntry>;
 }
 
-// ─── WAL (Write-Ahead Log) ──────────────────────────────────────────────────
+// ─── WAL (Write-Ahead Log / 预写日志) ────────────────────────────────────────
 
 export interface PendingWrite {
   key: string;
@@ -36,7 +36,7 @@ export interface PendingWrite {
   operation: "set" | "delete";
 }
 
-// ─── Health & Compaction ────────────────────────────────────────────────────
+// ─── Health & Compaction / 健康状态与整理 ────────────────────────────────────
 
 export interface HealthState {
   lastCompactAt: string | null;
@@ -59,7 +59,7 @@ export interface HealthDiagnostic {
   suggestion?: string;
 }
 
-// ─── Tool Response Helper ───────────────────────────────────────────────────
+// ─── Tool Response Helper / 工具响应辅助函数 ─────────────────────────────────
 
 export function textResult(text: string) {
   return { content: [{ type: "text" as const, text }] };

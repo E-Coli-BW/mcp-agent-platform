@@ -1,5 +1,6 @@
 id: coding-agent
 name: "Coding Agent"
+description: "Read, edit, and run code in this workspace"
 version: "1.0"
 model: qwen2.5:7b
 

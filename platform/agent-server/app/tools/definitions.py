@@ -181,7 +181,12 @@ def file_read(path: str, start_line: int | None = None, end_line: int | None = N
 
 @tool
 def file_list(directory: str | None = None, depth: int = 3) -> str:
-    """List contents of a directory in the workspace recursively. Shows files and subdirectories up to the given depth (default 3). Always call this BEFORE trying to read files to discover the actual file paths."""
+    """List a workspace-relative directory recursively.
+
+    Paths in the result are relative to the workspace root. The displayed
+    ``workspace root`` label is descriptive only and must not be prepended to
+    paths in later tool calls. Always call this before reading files.
+    """
     root = get_workspace_root()
     try:
         target = _resolve_in_workspace(directory)
@@ -192,7 +197,7 @@ def file_list(directory: str | None = None, depth: int = 3) -> str:
     IGNORE = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', '.idea', '.DS_Store',
               'tmp-m2-repo', '.mypy_cache', '.pytest_cache', '.gradle', 'build', 'target',
               '.sonic', '.venv-debug', '.tox', 'dist', 'egg-info'}
-    
+
     def _tree(dir_path, prefix, current_depth, max_depth):
         if current_depth > max_depth:
             return []
@@ -221,7 +226,9 @@ def file_list(directory: str | None = None, depth: int = 3) -> str:
 
     try:
         rel = os.path.relpath(target, root)
-        header = f"📁 {rel}/" if rel != '.' else f"📁 {os.path.basename(target)}/"
+        header = f"📁 {rel}/" if rel != '.' else "📁 workspace root/"
+        if rel == '.':
+            header += " (all paths below are relative; do not prefix 'workspace root')"
         tree_lines = _tree(target, '', 1, depth)
         if not tree_lines:
             return f"Directory '{directory or '.'}' is empty"
@@ -243,7 +250,15 @@ async def code_run(code: str, language: str = "python", timeout: int = 30) -> st
 @tool
 async def code_shell(command: str) -> str:
     """Execute a shell command. Shorthand for code_run with language=shell."""
-    return await _get_codeexec().call_tool("code_shell", {"command": command}, tenant_id=tenant_context.get())
+    from app.tools.agent_mode import run_idempotent_async_mutation
+
+    return await run_idempotent_async_mutation(
+        "code_shell",
+        {"command": command},
+        lambda: _get_codeexec().call_tool(
+            "code_shell", {"command": command}, tenant_id=tenant_context.get()
+        ),
+    )
 
 
 from app.tools.rag_tool import rag_search
@@ -333,7 +348,7 @@ _CACHE_TTL_SECONDS: float = 60  # re-check backend availability every 60s
 
 def get_tools() -> list:
     """Get available tools, re-probing backends every 60s.
-    
+
     Fixes: previously ALL_TOOLS was computed once at import time.
     If a backend started after the agent, its tools were permanently disabled.
     """
@@ -344,4 +359,3 @@ def get_tools() -> list:
         _cached_tools = _build_tool_list()
         _cache_timestamp = now
     return _cached_tools
-

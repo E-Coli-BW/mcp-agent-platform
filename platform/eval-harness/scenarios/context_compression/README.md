@@ -1,6 +1,6 @@
 # Context Compression & Observability
 
-> **Status**: Implemented (Phase 4-6)  
+> **Status**: Implemented (Phase 4-6)
 > **Depends on**: Skill Store (Phase 1-3)
 
 ## Overview
@@ -20,22 +20,27 @@ Long multi-turn agent sessions (especially debugging) scatter critical informati
 ┌─────────────────────────────────────────────────────────────────┐
 │  LangGraph StateGraph (graph_v2.py)                              │
 │                                                                  │
-│  ... → tools → track_errors → compress_history →                 │
-│        ┌──────────────────────────────┐                          │
-│        │  context_compressor (NEW)    │ ← fires at 75% budget   │
-│        │  - estimate tokens           │                          │
-│        │  - classify messages         │                          │
-│        │  - compress middle zone      │                          │
-│        │  - inject investigation state│                          │
-│        └──────────────────────────────┘                          │
-│        → call_llm → ...                                          │
+│  ... → tools → track_errors → update_investigation → call_llm   │
+│                                                     │            │
+│                                      _build_llm_view │            │
+│                                      - total char budget          │
+│                                      - compress middle zone       │
+│                                      - inject investigation facts │
+│                                      - explicit overflow          │
+│                                                     ↓            │
+│                                                   model          │
 │                                                                  │
 │  AgentState:                                                     │
-│    messages         ← sliding window (compressed)                │
-│    investigation_summary  ← structured facts (NEW)               │
-│    compression_summary    ← what was dropped (NEW)               │
+│    messages             ← lossless checkpoint history            │
+│    investigation        ← typed InvestigationState               │
+│    compression_summary  ← last model-view degradation summary    │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+Compression is a **model-view operation**, not a checkpoint mutation. The
+`add_messages` reducer retains the full message history and stable IDs;
+`_build_llm_view` creates a temporary bounded list immediately before
+`model.ainvoke(...)`.
 
 ### Compression Strategy (Tiered)
 
@@ -62,8 +67,7 @@ Long multi-turn agent sessions (especially debugging) scatter critical informati
 The `InvestigationState` is a structured extraction that survives compression:
 
 ```python
-@dataclass
-class InvestigationState:
+class InvestigationState(BaseModel):
     goal: str                      # "Fix NPE in UserService.save()"
     confirmed_facts: list[str]     # ["NullPointerException at UserService.java:142"]
     current_hypothesis: str        # "Race condition in event loop"
@@ -146,7 +150,8 @@ command mvn test -s tmp-mvn-settings.xml -gs tmp-mvn-settings.xml \
 
 ### Decision Logs
 
-Every compression, skill activation, and fact extraction emits a structured event:
+`decision_log.py` defines structured event envelopes for compression, skill
+activation, fact extraction, token budgets, and state snapshots:
 
 ```python
 from app.observability.decision_log import get_decision_logger, CompressionEvent
@@ -164,10 +169,13 @@ logger.log_compression(CompressionEvent(
 ))
 ```
 
-Events are emitted as:
+Callers can emit events as:
 - **Structured log lines** (always — for log aggregation/grep)
 - **Kafka topics** (production — `agent.decisions.compression`, `agent.decisions.skill_activation`)
 - **In-memory buffer** (testing — `logger.get_buffer()`)
+
+The current graph does not invoke these helpers automatically. Add calls at
+the relevant graph-node boundaries before treating them as production telemetry.
 
 ### Event Types
 
@@ -200,12 +208,13 @@ platform/agent-server/
     agent/
       compressor.py           # Context compression logic + InvestigationState
       skill_activation.py     # Skill auto-activation (Layer 2 & 3)
-      graph_v2.py             # Updated: context_compressor node wired in
+      graph_v2.py             # Typed state + _build_llm_view budget boundary
     observability/
       __init__.py
       decision_log.py         # Structured event logging + metrics
   tests/
-    test_compressor.py        # 14 tests: compression, investigation, extraction
+    test_compressor.py        # Unit contracts: compression, budget, investigation
+    test_context_contract.py  # Graph + reducer + checkpoint + model-view contract
     test_observability.py     # 12 tests: event logging, metrics, singletons
 
 platform/eval-harness/
@@ -229,10 +238,14 @@ platform/memory-server/
 In `app/config.py`:
 
 ```python
-max_context_chars: int = 20_000  # Budget (÷4 ≈ 5K tokens for compressor)
+max_context_chars: int = 20_000  # Hard budget for the complete model view
 ```
 
-The compressor triggers at 75% of `max_context_chars / 4` tokens. Adjust by changing `max_context_chars` or the threshold in `build_agent_graph()`.
+`_build_llm_view()` reserves this character budget for the system prompt,
+workspace/skill context, and conversation together. It passes only the remaining
+budget to `compress_messages()` without mutating checkpoint history. If mandatory
+retained content still cannot fit, the graph raises `ContextBudgetExceededError`
+instead of sending an oversized prompt.
 
 ---
 

@@ -33,7 +33,7 @@ curl -N http://localhost:8500/v1/chat/completions \
 Shows the **what** — request/response and tool decisions:
 
 ```
-17:27:43.849 [agent.chat]          INFO  📩 User message received [session=test-session-1, model=ops-agent]: create a ticket for the OOM issue
+17:27:43.849 [agent.chat]          INFO  📩 收到用户消息 [session=test-session-1, model=ops-agent]: create a ticket for the OOM issue
 17:27:43.851 [app.agent.graph_v2]  INFO  📂 Workspace context injected (2340 chars)
 17:27:43.852 [app.agent.graph_v2]  INFO  🧠 LLM call [loop=1, msgs=2, chars=2800, errors=0]
 17:27:44.200 [app.agent.graph_v2]  INFO  🤖 LLM decided to call 1 tool(s): ['file_search'] [349ms]
@@ -43,7 +43,7 @@ Shows the **what** — request/response and tool decisions:
 17:27:45.110 [app.agent.graph_v2]  INFO     ✅ Tool result [ticket_create, 65 chars]: ✅ Ticket created: INC-001
 17:27:45.111 [app.agent.graph_v2]  INFO  🧠 LLM call [loop=3, msgs=6, chars=4500, errors=0]
 17:27:45.800 [app.agent.graph_v2]  INFO  🤖 LLM responded with text [689ms, 230 chars]: Created ticket INC-001...
-17:27:45.801 [agent.chat]          INFO  📤 Agent response [session=test-session-1, tools=2, 1952ms]: Created ticket INC-001...
+17:27:45.801 [agent.chat]          INFO  📤 Agent 响应 [session=test-session-1, tools=2, 1952ms]: Created ticket INC-001...
 ```
 
 ### Level: DEBUG

@@ -17,11 +17,11 @@ import java.util.UUID;
  * Uses SET NX EX for atomic acquire, Lua script for atomic release.
  * This prevents the classic "delete someone else's lock" race condition.
  *
- * Design notes:
- * - UUID as value prevents releasing another client's lock
- * - Lua for release ensures atomic check-and-delete (no race between GET and DEL)
- * - EX (TTL) prevents deadlock if holder crashes
- * - Production upgrade path: Redisson RedLock for multi-node Redis
+ * Interview talking points:
+ * - Why UUID as value? → Prevents releasing another client's lock
+ * - Why Lua for release? → Atomic check-and-delete (no race between GET and DEL)
+ * - Why EX (TTL)? → Prevents deadlock if holder crashes
+ * - Production upgrade: Redisson RedLock for multi-node Redis
  *
  * Usage:
  *   String token = lock.acquire("resource:123", Duration.ofSeconds(10));

@@ -6,8 +6,8 @@ we can skip the first call_llm hop and dispatch the tool call directly.
 The LLM still sees the tool result on the next hop and decides whether
 to continue.
 
-WHY this design:
-==========================================
+WHY this design (operational rationale):
+========================================
 
 1. CONSERVATIVE BY DEFAULT.
    The router only fires on high-confidence patterns. Any ambiguity
@@ -39,6 +39,10 @@ WHY this design:
    bounded, no shell metacharacters), and (d) confirm the target tool
    exists in the bound tool list. If ANY step fails, fall through to
    the LLM. This makes the router fail-safe by construction.
+
+MEASUREMENT NOTE:
+    Measure direct-routing rate, latency, and agreement on the labeled eval set
+    before enabling this feature. Never auto-route writes or execution tools.
 
 GRAPH INTEGRATION (graph_v2.py):
 ================================

@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Rate limiting filter for auth endpoints.
  *
- * <p>Alibaba Security Rule #7: must implement replay/abuse prevention.
+ * <p>Alibaba 安全规约 #7: must implement replay/abuse prevention.
  * Limits: 30 req/min per IP on /auth/login, /auth/signup, /auth/token, /auth/register.</p>
  */
 @Configuration

@@ -24,6 +24,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * tool_audit table would be trivial. For now, we track in-memory stats
  * and log events. In production, this would be a separate audit-service.
  *
+ * INTERVIEW POINT:
+ * - "The Python agent produces fire-and-forget events to Kafka.
+ *    The Java consumer processes them independently — if the consumer
+ *    is down, events queue in Kafka and are processed when it restarts.
+ *    This is the key benefit over direct REST calls for audit."
+ *
  * CONDITIONAL: Only activates when spring.kafka.bootstrap-servers is set.
  */
 @Component

@@ -9,40 +9,40 @@
 
 ## 1. MVP Scope Definition
 
-### Core Problem
-Upgrade the personal memory MCP server into an enterprise multi-tenant platform supporting team-shared memory, secure access, and observable operations.
+### 核心问题
+把个人版 memory MCP server 升级为企业级多租户平台，支持团队共享记忆、安全访问、可观测运维。
 
-### MVP must-have vs nice-to-have
+### MVP 必须有 vs 可以没有
 
-| Feature | MVP | Rationale |
+| Feature | MVP | 理由 |
 |---------|:---:|------|
-| MCP SSE Transport | ✅ | core: multiple clients connect to one service |
-| Multi-tenancy | ✅ | core enterprise requirement, designed in from day one |
-| JWT Authentication | ✅ | most basic security requirement |
-| PostgreSQL persistence | ✅ | JSON files aren't suited for concurrent writes |
-| Redis cache | ✅ | read-heavy / write-light scenario, high cache value |
-| TF-IDF search | ✅ | core feature, use the built-in implementation first |
-| Health Check + Metrics | ✅ | minimum ops requirement |
-| Retry + Circuit Breaker | ✅ | production-grade fault tolerance |
-| Audit Log | ✅ | enterprise compliance requirement |
-| Elasticsearch search | ❌ | later than MVP; use DB LIKE + in-memory TF-IDF first |
-| Kafka async import | ❌ | MVP uses synchronous import, which is enough |
-| Vector search / Embedding | ❌ | future direction, doesn't affect MVP |
-| Spring Cloud Gateway | ❌ | MVP is single-service; add a gateway later |
-| K8s deployment | ❌ | MVP uses Docker Compose |
-| Canary release | ❌ | later than MVP |
+| MCP SSE Transport | ✅ | 核心：多客户端连一个服务 |
+| Multi-tenancy (多租户) | ✅ | 企业核心需求，从第一天就要设计进去 |
+| JWT Authentication | ✅ | 最基础的安全要求 |
+| PostgreSQL 持久化 | ✅ | JSON 文件不适合并发写 |
+| Redis 缓存 | ✅ | 读多写少场景，缓存价值大 |
+| TF-IDF 搜索 | ✅ | 核心功能，先用内置实现 |
+| Health Check + Metrics | ✅ | 运维最低要求 |
+| Retry + Circuit Breaker | ✅ | 生产级容错 |
+| Audit Log | ✅ | 企业合规要求 |
+| Elasticsearch 搜索 | ❌ | MVP 后期，先用 DB LIKE + 内存 TF-IDF |
+| Kafka 异步导入 | ❌ | MVP 用同步导入，够用 |
+| 向量搜索 / Embedding | ❌ | 未来方向，不影响 MVP |
+| Spring Cloud Gateway | ❌ | MVP 单服务，网关后加 |
+| K8s 部署 | ❌ | MVP 用 Docker Compose |
+| 灰度发布 | ❌ | MVP 后期 |
 
-### Tradeoff Notes
+### Tradeoff 记录
 
-| Decision | Chosen | Rejected | Rationale |
+| 决策 | 选择 | 放弃 | 理由 |
 |------|------|------|------|
-| Search engine | built-in TF-IDF + DB LIKE | Elasticsearch | fewer deps for MVP; adding ES later doesn't change the API |
-| Message queue | synchronous write | Kafka | import volume is small, synchronous is enough |
-| Gateway | embedded Filter | standalone Gateway | a single service doesn't need a standalone gateway |
-| Cache | Redis write-through | local Caffeine | multi-instance deployment needs a shared cache |
-| Database | PostgreSQL | MySQL/MongoDB | great JSONB support, built-in full-text search |
-| Authentication | JWT (stateless) | Session (stateful) | stateless, suits multiple instances |
-| Multi-tenancy | shared table + tenant_id | separate schema/db | simple for MVP, enough at small data volumes |
+| 搜索引擎 | 内置 TF-IDF + DB LIKE | Elasticsearch | MVP 减少依赖，ES 后期加不影响接口 |
+| 消息队列 | 同步写 | Kafka | 导入量不大，同步够用 |
+| 网关 | 内嵌 Filter | 独立 Gateway | 单服务不需要独立网关 |
+| 缓存 | Redis write-through | 本地 Caffeine | 多实例部署需要共享缓存 |
+| 数据库 | PostgreSQL | MySQL/MongoDB | JSONB 支持好，全文搜索内置 |
+| 鉴权 | JWT (stateless) | Session (stateful) | 无状态，适合多实例 |
+| 多租户 | 共享表 + tenant_id | 独立 schema/库 | MVP 简单，数据量小时够用 |
 
 ## 2. Architecture (MVP)
 
@@ -76,16 +76,16 @@ Upgrade the personal memory MCP server into an enterprise multi-tenant platform 
 └──────────────────────────────────────────────────┘
 ```
 
-## 3. Module Breakdown (implementation order)
+## 3. Module Breakdown (实现顺序)
 
-Bottom-up by dependency order:
+按依赖关系从底向上：
 
-| # | Module | Files | Dependencies | Est. LOC |
+| # | Module | 文件 | 依赖 | 估计行数 |
 |---|--------|------|------|---------|
-| 1 | **Data Model** | `model/` | none | ~100 |
+| 1 | **Data Model** | `model/` | 无 | ~100 |
 | 2 | **Persistence** | `repository/` | JPA, PostgreSQL | ~80 |
 | 3 | **Cache** | `cache/` | Redis | ~60 |
-| 4 | **Search** | `search/` | no external deps | ~80 |
+| 4 | **Search** | `search/` | 无外部依赖 | ~80 |
 | 5 | **Domain Service** | `service/` | 2,3,4 | ~200 |
 | 6 | **Security** | `security/` | Spring Security | ~100 |
 | 7 | **MCP Tools** | `tool/` | 5 | ~150 |
@@ -93,7 +93,7 @@ Bottom-up by dependency order:
 | 9 | **Observability** | `config/` | Actuator, Micrometer | ~50 |
 | 10 | **Docker Compose** | `docker/` | — | ~30 |
 
-**Total: ~900 lines of Java + configuration**
+**总计：~900 行 Java + 配置**
 
 ## 4. Package Structure
 
@@ -128,7 +128,7 @@ com.example.memoryserver/
 
 ## 5. API Contract
 
-Input/output contract for all MCP Tools (independent of implementation):
+所有 MCP Tool 的输入输出契约（不随实现变化）：
 
 ### memory_set
 ```json
@@ -168,16 +168,16 @@ Output: "📌 Memory pinned: \"key\""
 
 ## 6. Non-functional Requirements
 
-| Metric | Target | Measurement |
+| 指标 | 目标 | 度量方式 |
 |------|------|---------|
-| Read latency (P99) | < 10ms (cache hit) | Micrometer timer |
-| Write latency (P99) | < 50ms | Micrometer timer |
-| Availability | 99.9% | Actuator health |
-| Concurrent users | 100+ | Virtual Threads |
-| Per-tenant memory limit | 10,000 entries | DB count check |
-| Search result latency | < 100ms | Timer |
-| Startup time | < 5s | log timestamps |
-| Memory footprint | < 512MB | JVM metrics |
+| 读延迟 (P99) | < 10ms (cache hit) | Micrometer timer |
+| 写延迟 (P99) | < 50ms | Micrometer timer |
+| 可用性 | 99.9% | Actuator health |
+| 并发用户 | 100+ | Virtual Threads |
+| 单租户记忆上限 | 10,000 条 | DB count 检查 |
+| 搜索结果延迟 | < 100ms | Timer |
+| 启动时间 | < 5s | 日志时间戳 |
+| 内存占用 | < 512MB | JVM metrics |
 
 ---
 

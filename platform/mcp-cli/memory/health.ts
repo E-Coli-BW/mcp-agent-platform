@@ -1,6 +1,6 @@
 /**
  * Health diagnostics: smart analysis based on forgetting curve (replaces hardcoded thresholds)
- * Health diagnostics: forgetting-curve-based intelligent analysis (replaces hardcoded thresholds)
+ * 健康诊断: 基于遗忘曲线的智能分析（替代 hardcoded thresholds）
  */
 
 import type { MemoryStore, HealthDiagnostic } from "./types.js";
@@ -16,11 +16,11 @@ export function diagnoseHealth(store: MemoryStore, config: ForgetConfig): Health
   const now = Date.now();
 
   // When forgetting curve is disabled, skip all retention-based diagnostics
-  // When the forgetting curve is disabled, skip all retention-related diagnostics
+  // 遗忘曲线关闭时，跳过所有 retention 相关诊断
   if (!config.enabled) {
     diagnostics.push({
       level: "info",
-      message: `ℹ️ Forgetting curve is disabled (enabled=false); all ${entries.length} memories keep equal search weight`,
+      message: `ℹ️ 遗忘曲线已关闭 (enabled=false)，所有 ${entries.length} 条记忆保持同等搜索权重`,
     });
 
     // Still show storage size info
@@ -28,65 +28,65 @@ export function diagnoseHealth(store: MemoryStore, config: ForgetConfig): Health
     if (sizeKB > 500) {
       diagnostics.push({
         level: "warning",
-        message: `💾 Storage size ${sizeKB}KB`,
-        suggestion: `If the memory count exceeds expectations, manually clean up entries you no longer need`,
+        message: `💾 存储大小 ${sizeKB}KB`,
+        suggestion: `如记忆数超过预期，可手动清理不再需要的条目`,
       });
     }
 
     return diagnostics;
   }
 
-  // Forgetting-curve analysis
+  // 遗忘曲线分析
   const retentionData = analyzeRetention(entries, config, now);
   const forgotten = retentionData.filter((r) => r.status === "forgotten");
   const fading = retentionData.filter((r) => r.status === "fading");
 
   // Safety valve: if >70% of memories are forgotten, it's likely due to long inactivity
   // rather than truly stale data. Don't suggest bulk deletion — prompt review instead.
-  // Safety valve: if more than 70% of memories are forgotten, it likely means long disuse rather than that they truly should be deleted
-  // In that case, don't suggest bulk deletion; prompt the user to review first
+  // 安全阀: 如果超过 70% 的记忆都 forgotten，说明可能是长时间未使用而非真正该删
+  // 此时不建议批量删除，而是提示用户先审查
   const forgottenRatio = entries.length > 0 ? forgotten.length / entries.length : 0;
 
-  // 1. Forgotten memories (retention < forgottenThreshold)
+  // 1. Forgotten 记忆（retention < forgottenThreshold）
   if (forgottenRatio > 0.7 && forgotten.length > 5) {
     diagnostics.push({
       level: "info",
-      message: `⚠️ ${forgotten.length}/${entries.length} memories (${Math.round(forgottenRatio * 100)}%) are in the forgotten state — likely due to long disuse; bulk deletion is not advised`,
-      suggestion: `First browse with memory_list(), reinforce important memories with memory_pin(key) or memory_get(key), then consider cleaning up`,
+      message: `⚠️ ${forgotten.length}/${entries.length} 条记忆 (${Math.round(forgottenRatio * 100)}%) 处于 forgotten 状态 — 可能是长时间未使用导致，不建议批量删除`,
+      suggestion: `建议先用 memory_list() 浏览，对重要记忆执行 memory_pin(key) 或 memory_get(key) 来强化，再考虑清理`,
     });
   } else if (forgotten.length > 0) {
     diagnostics.push({
       level: "action-needed",
-      message: `🧊 ${forgotten.length} memories are nearly forgotten (retention < ${config.forgottenThreshold})`,
-      suggestion: `Call memory_compact_plan() to see details; you can delete or merge: ${forgotten.slice(0, 3).map((r) => `${r.key}(R=${r.retention})`).join(", ")}${forgotten.length > 3 ? "..." : ""}`,
+      message: `🧊 ${forgotten.length} 条记忆已接近遗忘 (retention < ${config.forgottenThreshold})`,
+      suggestion: `建议调用 memory_compact_plan() 查看详情，可删除或合并: ${forgotten.slice(0, 3).map((r) => `${r.key}(R=${r.retention})`).join(", ")}${forgotten.length > 3 ? "..." : ""}`,
     });
   }
 
-  // 2. Fading memories (retention < fadingThreshold)
+  // 2. Fading 记忆（retention < fadingThreshold）
   if (fading.length > 3) {
     diagnostics.push({
       level: "warning",
-      message: `⏳ ${fading.length} memories are fading (retention ${config.forgottenThreshold}~${config.fadingThreshold})`,
-      suggestion: `Accessing or updating them re-reinforces the memory`,
+      message: `⏳ ${fading.length} 条记忆正在衰减 (retention ${config.forgottenThreshold}~${config.fadingThreshold})`,
+      suggestion: `访问或更新它们可以重新强化记忆`,
     });
   }
 
-  // 3. Storage size
+  // 3. 存储大小
   const sizeKB = getStoreSizeKB();
   if (sizeKB > 300) {
     diagnostics.push({
       level: "action-needed",
-      message: `💾 Storage size ${sizeKB}KB, compaction suggested`,
-      suggestion: `Delete memories in the forgotten state first`,
+      message: `💾 存储大小 ${sizeKB}KB，建议整理`,
+      suggestion: `优先删除 forgotten 状态的记忆`,
     });
   } else if (sizeKB > 200) {
     diagnostics.push({
       level: "warning",
-      message: `💾 Storage size ${sizeKB}KB, approaching the recommended limit`,
+      message: `💾 存储大小 ${sizeKB}KB，接近推荐上限`,
     });
   }
 
-  // 4. Namespace concentration (more than 40% of entries in a single namespace)
+  // 4. Namespace 集中度（超过 40% 的条目集中在一个 namespace）
   const nsCounts: Record<string, number> = {};
   for (const e of entries) {
     nsCounts[e.namespace] = (nsCounts[e.namespace] ?? 0) + 1;
@@ -95,50 +95,50 @@ export function diagnoseHealth(store: MemoryStore, config: ForgetConfig): Health
     if (count > entries.length * 0.4 && count > 15) {
       diagnostics.push({
         level: "warning",
-        message: `📂 Namespace "${ns}" accounts for ${Math.round((count / entries.length) * 100)}% (${count}/${entries.length})`,
-        suggestion: `Consider merging similar memories in "${ns}"`,
+        message: `📂 Namespace "${ns}" 占比 ${Math.round((count / entries.length) * 100)}% (${count}/${entries.length})`,
+        suggestion: `考虑合并 "${ns}" 中相似的记忆`,
       });
     }
   }
 
   // 5. Time since last compact (dynamic: more memories → more frequent compaction needed)
-  // Time since last compaction (forgetting-curve thinking: as memory count grows, compaction should be more frequent)
+  // 距上次整理时间（用遗忘曲线思维：随记忆数增长，整理频率应更高）
   if (health.lastCompactAt) {
     const daysSinceCompact = (now - new Date(health.lastCompactAt).getTime()) / (1000 * 60 * 60 * 24);
     // Dynamic threshold: more memories → need more frequent compaction
-    // Dynamic threshold: the more memories, the more frequently compaction is needed
+    // 动态阈值：记忆越多，需要越频繁整理
     const compactInterval = Math.max(7, 30 - entries.length * 0.2);
     if (daysSinceCompact > compactInterval) {
       diagnostics.push({
         level: "warning",
-        message: `⏰ ${Math.round(daysSinceCompact)} days since last compaction (suggested interval: ${Math.round(compactInterval)} days)`,
-        suggestion: `Call memory_compact_plan() to see the compaction plan`,
+        message: `⏰ 距上次整理已 ${Math.round(daysSinceCompact)} 天 (建议间隔: ${Math.round(compactInterval)} 天)`,
+        suggestion: `调用 memory_compact_plan() 查看整理方案`,
       });
     }
   } else if (entries.length > 20) {
     diagnostics.push({
       level: "info",
-      message: `ℹ️ Compaction has never run; currently ${entries.length} memories`,
+      message: `ℹ️ 从未执行过整理，当前 ${entries.length} 条记忆`,
     });
   }
 
-  // 6. No pinned memories hint
+  // 6. No pinned memories hint / 无 pinned 记忆提示
   const pinnedCount = entries.filter((e) => e.pinned).length;
   if (pinnedCount === 0 && entries.length > 10) {
     diagnostics.push({
       level: "info",
-      message: `📌 No pinned memories currently. Important memories (e.g. the workspace index or personal profile) should be pinned to avoid being forgotten`,
-      suggestion: `Call memory_set(key, content, { pinned: true }) or memory_pin(key)`,
+      message: `📌 当前无 pinned 记忆。重要的记忆（如 workspace 索引、个人档案）建议设为 pinned 以防被遗忘`,
+      suggestion: `调用 memory_set(key, content, { pinned: true }) 或 memory_pin(key)`,
     });
   }
 
-  // 7. WAL check
+  // 7. WAL check / WAL 检查
   const walResult = walRecover();
   if (walResult.recovered > 0) {
     diagnostics.push({
       level: "action-needed",
-      message: `🔄 Found ${walResult.recovered} un-flushed WAL records`,
-      suggestion: `These records were auto-recovered at server startup`,
+      message: `🔄 发现 ${walResult.recovered} 条未落盘的 WAL 记录`,
+      suggestion: `这些记录已在 server 启动时自动恢复`,
     });
   }
 
@@ -146,7 +146,7 @@ export function diagnoseHealth(store: MemoryStore, config: ForgetConfig): Health
 }
 
 /** Generate forgetting curve distribution summary (for memory_context)
- *  Generate a forgetting-curve distribution summary (used by memory_context) */
+ *  生成遗忘曲线分布摘要（用于 memory_context） */
 export function retentionSummary(entries: RetentionInfo[]): {
   strong: number;
   fading: number;

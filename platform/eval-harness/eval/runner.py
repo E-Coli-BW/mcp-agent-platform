@@ -89,7 +89,18 @@ def _ensure_jwt(jwt_file: str, auth_url: str) -> str:
     if p.exists():
         existing = p.read_text().strip()
         if existing:
-            return existing
+            # A stale cache otherwise turns every case into a misleading
+            # 401 quality failure. Decode only the expiry claim locally; the
+            # auth service remains the source of truth for signature checks.
+            try:
+                import jwt as pyjwt
+                claims = pyjwt.decode(existing, options={"verify_signature": False})
+                if not claims.get("exp") or float(claims["exp"]) > time.time() + 30:
+                    return existing
+            except Exception:
+                # Preserve compatibility with environments without PyJWT;
+                # login below refreshes the token when decoding is unavailable.
+                pass
     log.info("minting fresh JWT (file empty/missing: %s)", jwt_file)
     with httpx.Client(timeout=10) as c:
         # signup is idempotent — ignore 409/400.
@@ -379,6 +390,8 @@ def cli() -> int:
     ap.add_argument("--jwt-file", default=DEFAULT_JWT_FILE,
                     help="Path to file storing/caching the JWT. Created if missing.")
     ap.add_argument("--runs-dir", default=str(DEFAULT_RUNS_DIR))
+    ap.add_argument("--agent-id", default=os.environ.get("EVAL_AGENT_ID", "coding-agent"))
+    ap.add_argument("--run-type", choices=("full", "smoke", "qa"), default="full")
     ap.add_argument("--tag", action="append", default=[],
                     help="Run only cases with this tag. Repeatable.")
     ap.add_argument("--case", action="append", default=[],
@@ -417,6 +430,10 @@ def cli() -> int:
         cli_pass_threshold=args.pass_threshold,
     ))
     summary = _summarize(aggregates)
+    summary["agent_id"] = args.agent_id
+    summary["run_type"] = args.run_type
+    summary["trigger"] = "cli"
+    summary["cases_dir"] = str(args.cases_dir)
 
     # Persist artifacts: summary.json + report.md + dashboard-friendly latest.json
     runs_root = Path(args.runs_dir)

@@ -202,8 +202,9 @@ class RunResult:
 class CaseAggregate:
     """Aggregate of N independent RunResults for ONE case.
 
-    Rationale: a single LLM-in-the-loop verdict on a 7B model at T>0
-    is a coin flip; only k/N pass-rates are evidence.
+    Models the lesson from `skill-engineering-effect-eval-iteration`:
+    a single LLM-in-the-loop verdict on a 7B model at T>0 is a coin
+    flip; only k/N pass-rates are evidence.
 
     Acceptance contract:
       - if N == 1: passed = runs[0].passed (back-compat, indistinguishable

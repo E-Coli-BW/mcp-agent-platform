@@ -9,6 +9,11 @@ WHY KAFKA?
 GRACEFUL DEGRADATION:
 - If Kafka is unavailable, events are silently dropped (agent still works)
 - Same pattern as our Redis conversation store: try/except → no-op on failure
+
+INTERVIEW POINT:
+- "Tool events flow through Kafka to decouple the agent from audit/analytics.
+   The Python agent produces events, Java consumers process them — this is a
+   real cross-language distributed system with shared event schemas."
 """
 
 import json
@@ -50,7 +55,7 @@ class ToolEvent:
 
 class KafkaEventProducer:
     """Async Kafka producer for agent events.
-    
+
     Lazy-initializes on first use. Falls back to no-op if Kafka is unavailable.
     """
 

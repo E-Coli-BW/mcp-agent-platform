@@ -2,14 +2,14 @@
 /**
  * Local File Search MCP Server
  *
- * Local file-search tool, supporting:
- * - Search by filename glob pattern
- * - Search by file-content keyword (grep style)
- * - Filter by file type / directory
- * - Read file content (with line-number range)
- * - Retrieve the directory structure tree
+ * 本地文件搜索工具，支持：
+ * - 按文件名 glob 模式搜索
+ * - 按文件内容关键词搜索（grep 风格）
+ * - 按文件类型/目录过滤
+ * - 读取文件内容（带行号范围）
+ * - 获取目录结构树
  *
- * Runs purely locally, with no external service dependencies
+ * 纯本地执行，不依赖任何外部服务
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

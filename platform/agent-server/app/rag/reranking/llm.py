@@ -3,7 +3,7 @@
 Why LLM rerank vs heuristic / cross-encoder?
 
 - Heuristic (lexical bonuses): fast but blind to semantics. When the bonus
-  weights are wrong they override RRF and recall collapses — brittle by nature.
+  weights were wrong they overrode RRF and recall collapsed — brittle by nature.
 - Cross-encoder (MiniLM): fast (~100ms), deterministic, semantic. Still
   pairwise — scores each (query, passage) independently, so it can't compare
   candidates against each other.
@@ -25,6 +25,11 @@ Robustness rules (learned the hard way):
 4. Bound the input. Truncate each passage to a few hundred chars — we're
    ranking, not summarizing.
 5. Use a timeout. LLMs can hang. Fall back to the original order on timeout.
+
+Interview talking point:
+- "LLM rerank wins on precision because it sees all candidates at once. The
+   trick is robust parsing and graceful degradation — never let the reranker
+   become a single point of failure for the whole RAG path."
 """
 
 from __future__ import annotations

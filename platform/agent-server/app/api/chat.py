@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+import os
+import re
 import time
 import uuid
 from typing import AsyncIterator
@@ -35,6 +37,16 @@ from app.events.model_provenance import (
     current_trace_id,
     infer_provider,
     make_model_call_event,
+)
+from app.runtime import RunStatus, get_run_recorder, get_idempotency_store
+from app.runtime.cancellation import get_run_cancellation_registry
+from app.runtime.policy import get_policy_evaluator
+from app.runtime.tool_invocation import make_tool_invocation_envelope
+from app.runtime.approval import get_approval_registry
+from app.runtime.checkpoint import get_checkpoint_store
+from app.runtime.tool_authorization import (
+    reset_approval_notifier,
+    set_approval_notifier,
 )
 
 router = APIRouter()
@@ -85,9 +97,15 @@ def _make_chunk(content: str, model: str, finish_reason: str | None = None) -> s
     return json.dumps(chunk)
 
 
-def _make_tool_event(action: str, tool_name: str, data: dict, seq: int) -> dict:
+def _make_tool_event(
+    action: str,
+    tool_name: str,
+    data: dict,
+    seq: int,
+    event_id: str | None = None,
+) -> dict:
     """Create a named SSE tool event (separate from content stream)."""
-    return {
+    event = {
         "event": f"tool_{action}",
         "data": json.dumps({
             "tool": tool_name,
@@ -95,14 +113,20 @@ def _make_tool_event(action: str, tool_name: str, data: dict, seq: int) -> dict:
             **data,
         }),
     }
+    if event_id:
+        event["id"] = event_id
+    return event
 
 
-def _make_status_event(state: str, **extra) -> dict:
+def _make_status_event(state: str, event_id: str | None = None, **extra) -> dict:
     """Create a named SSE status event."""
-    return {
+    event = {
         "event": "status",
         "data": json.dumps({"state": state, **extra}),
     }
+    if event_id:
+        event["id"] = event_id
+    return event
 
 
 def _make_child_event(bus_event: dict) -> dict:
@@ -138,9 +162,9 @@ async def _stream_agent_response(
 
     `temperature`: forwarded to `get_agent`. None ⇒ server-default
     (`settings.default_temperature`). Was silently dropped before this
-    change was wired through. The agent cache is keyed on (model,
-    temperature) so concurrent T=0 and T=0.7 requests get distinct
-    model instances.
+    change — see latent bug D in EVAL-ITERATION-REPORT-2026-05-29.md.
+    The agent cache is keyed on (model, temperature) so concurrent T=0
+    and T=0.7 requests get distinct model instances.
     """
     prompt_resolution = resolve_system_prompt(
         requested_version=prompt_version,
@@ -161,6 +185,7 @@ async def _stream_agent_response(
     flag_snapshot = build_feature_flags_snapshot()
     runtime_name = f"python-{settings.agent_graph_version}"
     effective_temperature = temperature if temperature is not None else settings.default_temperature
+    run_recorder = get_run_recorder()
 
     # Register the fleet bus for this session so any spawn_subagent calls
     # inside the agent loop can publish child events. We subscribe to it
@@ -176,7 +201,7 @@ async def _stream_agent_response(
 
     input_preview = (user_input[:120] + "...") if len(user_input) > 120 else user_input
     logger.info(
-        "📩 User message received [session=%s, model=%s]: %s",
+        "📩 收到用户消息 [session=%s, model=%s]: %s",
         session_id, model, input_preview,
     )
 
@@ -186,6 +211,8 @@ async def _stream_agent_response(
     }
     full_response = ""
     lock_acquired = False
+    client_disconnected = False
+    cancel_requested = False
 
     try:
         # Token tracking
@@ -209,26 +236,64 @@ async def _stream_agent_response(
         start_time = time.time()
         model_call_seq = 0
         active_model_call: dict | None = None
-        
+
         # Reranker feedback tracking
         last_rag_query = None
         last_rag_chunks = []
+        retrieval_trace_ids: list[str] = []
         file_reads_after_rag = []
         tools_since_rag = 0  # count tool calls since last rag_search
 
+        await run_recorder.start_run(
+            run_id=req_ctx.run_id,
+            request_id=req_ctx.request_id,
+            tenant_id=tenant_id,
+            session_id=session_id,
+            model=model,
+            metadata={
+                "runtime": runtime_name,
+                "prompt_version": prompt_resolution.version,
+                "prompt_hash": prompt_resolution.content_hash,
+                "temperature": effective_temperature,
+            },
+        )
+        cancellation = get_run_cancellation_registry()
+        await cancellation.register(req_ctx.run_id)
+        status_event = await run_recorder.record_event(
+            req_ctx.run_id,
+            "status_thinking",
+            {"request_id": req_ctx.request_id},
+        )
         yield _make_status_event(
             "thinking",
+            event_id=status_event.event_id,
             request_id=req_ctx.request_id,
             run_id=req_ctx.run_id,
         )
 
+        # Test-only pause makes cancellation acceptance deterministic. It is
+        # opt-in and runs after the run id is visible to the client.
+        test_delay_ms = int(os.environ.get("AGENT_TEST_DELAY_MS", "0"))
+        if test_delay_ms > 0:
+            await asyncio.sleep(test_delay_ms / 1000)
+
         # Session LANE — prevent interleaved requests for same session
         from app.middleware.session_lane import (
             release_session_lock,
+            session_lock_held,
             wait_for_session_lock,
         )
 
-        if not await wait_for_session_lock(session_id, max_wait=30):
+        was_queued = await session_lock_held(session_id)
+        if was_queued:
+            yield _make_status_event(
+                "queued",
+                request_id=req_ctx.request_id,
+                run_id=req_ctx.run_id,
+                message="Your message is queued behind the active turn",
+            )
+
+        if not await wait_for_session_lock(session_id, max_wait=900):
             yield _make_chunk(
                 "⚠️ Another request for this session is still processing. Please wait.",
                 model,
@@ -254,6 +319,11 @@ async def _stream_agent_response(
         merge_q: asyncio.Queue = asyncio.Queue()
         # Sentinel object distinguishable from any real event.
         _AGENT_DONE = object()
+
+        async def _notify_approval(approval):
+            await merge_q.put(("approval_required", approval))
+
+        approval_notifier_token = set_approval_notifier(_notify_approval)
 
         async def _drain_agent():
             try:
@@ -289,6 +359,23 @@ async def _stream_agent_response(
                 # Check if client disconnected (SSE long-poll protection)
                 if http_request is not None and await http_request.is_disconnected():
                     logger.info("🔌 Client disconnected [session=%s], aborting stream", session_id)
+                    client_disconnected = True
+                    await run_recorder.record_event(
+                        req_ctx.run_id,
+                        "client_disconnected",
+                        {"session_id": session_id},
+                    )
+                    agent_task.cancel()
+                    break
+
+                if await cancellation.is_requested(req_ctx.run_id):
+                    logger.info("⏹ Root run cancellation requested [run=%s]", req_ctx.run_id)
+                    cancel_requested = True
+                    await run_recorder.record_event(
+                        req_ctx.run_id,
+                        "cancel_requested",
+                        {"request_id": req_ctx.request_id, "session_id": session_id},
+                    )
                     agent_task.cancel()
                     break
 
@@ -305,6 +392,13 @@ async def _stream_agent_response(
                     break
                 if source == "agent_error":
                     raise event  # re-raise into the outer try/except below
+
+                if source == "approval_required":
+                    yield {
+                        "event": "approval_required",
+                        "data": json.dumps(event.to_dict()),
+                    }
+                    continue
 
                 if source == "bus":
                     # Forward child fleet events to the browser unchanged
@@ -349,6 +443,18 @@ async def _stream_agent_response(
                         "prompt_tokens": call_prompt_tokens,
                         "completion_tokens": 0,
                     }
+                    await run_recorder.record_event(
+                        req_ctx.run_id,
+                        "model_call_started",
+                        {
+                            "seq": model_call_seq,
+                            "provider": infer_provider(model),
+                            "model": model,
+                            "prompt_tokens": call_prompt_tokens,
+                            "prompt_version": prompt_resolution.version,
+                            "prompt_hash": prompt_resolution.content_hash,
+                        },
+                    )
 
                 # Stream LLM tokens
                 if kind == "on_chat_model_stream":
@@ -387,6 +493,19 @@ async def _stream_agent_response(
                         )
                         from app.events.kafka_producer import get_event_producer
                         await get_event_producer().emit_model_call(model_event)
+                        await run_recorder.record_event(
+                            req_ctx.run_id,
+                            "model_call_completed",
+                            {
+                                "seq": active_model_call["seq"],
+                                "provider": infer_provider(model),
+                                "model": model,
+                                "prompt_tokens": active_model_call["prompt_tokens"],
+                                "completion_tokens": active_model_call["completion_tokens"],
+                                "duration_ms": duration_ms,
+                                "status": "ok",
+                            },
+                        )
                         active_model_call = None
 
                 # Log tool calls — emit structured event for UI
@@ -394,6 +513,16 @@ async def _stream_agent_response(
                     tool_name = event.get("name", "unknown")
                     tool_input = event.get("data", {}).get("input", {})
                     tool_count += 1
+                    tool_envelope = make_tool_invocation_envelope(
+                        run_id=req_ctx.run_id,
+                        request_id=req_ctx.request_id,
+                        session_id=session_id,
+                        tenant_id=tenant_id,
+                        step_seq=tool_count,
+                        tool_name=tool_name,
+                        arguments=tool_input if isinstance(tool_input, dict) else {"input": tool_input},
+                    )
+                    policy_decision = get_policy_evaluator().evaluate(tool_envelope)
 
                     # Publish to Kafka (fire-and-forget, no blocking)
                     from app.events.kafka_producer import get_event_producer
@@ -413,8 +542,23 @@ async def _stream_agent_response(
                     if last_rag_query:
                         tools_since_rag += 1
 
+                    tool_started_event = await run_recorder.record_event(
+                        req_ctx.run_id,
+                        "tool_started",
+                        {
+                            "seq": tool_count,
+                            "tool": tool_name,
+                            "input": tool_input,
+                            "invocation": tool_envelope.to_event_payload(),
+                            "policy_decision": policy_decision.to_event_payload(),
+                        },
+                    )
                     yield _make_tool_event(
-                        "start", tool_name, {"input": tool_input}, seq=tool_count
+                        "start",
+                        tool_name,
+                        {"input": tool_input},
+                        seq=tool_count,
+                        event_id=tool_started_event.event_id,
                     )
 
                     # OLD: HTML comment for backward compat (remove after frontend migration)
@@ -431,11 +575,57 @@ async def _stream_agent_response(
                     tool_output = str(event.get("data", {}).get("output", ""))[:500]
                     tool_input_end = event.get("data", {}).get("input", {})
 
+                    # Reconstruct the candidate set for the implicit
+                    # reranker label. Tool events expose the rendered output,
+                    # not the ScoredChunk objects, so query the same tenant
+                    # index once after rag_search completes. This keeps the
+                    # feedback path independent from display formatting.
+                    if tool_name == "rag_search" and last_rag_query:
+                        try:
+                            from app.rag.index.retriever import get_retriever_for_tenant
+                            retriever = await get_retriever_for_tenant(
+                                tenant_id,
+                                collection=get_request_context().knowledge_collection or None,
+                            )
+                            last_rag_chunks = await retriever.search(last_rag_query, top_k=5)
+                            from app.feedback.store import record_retrieval_trace
+                            trace = record_retrieval_trace(
+                                run_id=req_ctx.run_id,
+                                session_id=session_id,
+                                tenant_id=tenant_id,
+                                agent=model,
+                                query=last_rag_query,
+                                chunks=[{
+                                    "path": chunk.file_path,
+                                    "name": chunk.name,
+                                    "score": chunk.score,
+                                    "start_line": chunk.start_line,
+                                    "end_line": chunk.end_line,
+                                } for chunk in last_rag_chunks],
+                                embedding_version=os.environ.get("AGENT_EMBEDDING_MODEL", "mxbai-embed-large"),
+                                reranker_version=os.environ.get("AGENT_RERANKER", "learned"),
+                                collection=get_request_context().knowledge_collection or "default",
+                            )
+                            retrieval_trace_ids.append(trace["trace_id"])
+                        except Exception:
+                            last_rag_chunks = []
+
+                    tool_completed_event = await run_recorder.record_event(
+                        req_ctx.run_id,
+                        "tool_completed",
+                        {
+                            "seq": tool_count,
+                            "tool": tool_name,
+                            "input": tool_input_end,
+                            "output_preview": tool_output[:200],
+                        },
+                    )
                     yield _make_tool_event(
                         "end",
                         tool_name,
                         {"input": tool_input_end, "output": tool_output[:200]},
                         seq=tool_count,
+                        event_id=tool_completed_event.event_id,
                     )
 
                     # OLD: HTML comment for backward compat
@@ -464,6 +654,7 @@ async def _stream_agent_response(
                     await t
                 except (asyncio.CancelledError, Exception):
                     pass
+            reset_approval_notifier(approval_notifier_token)
 
         if active_model_call is not None:
             duration_ms = int((time.monotonic() - active_model_call["started_at"]) * 1000)
@@ -490,11 +681,24 @@ async def _stream_agent_response(
             )
             from app.events.kafka_producer import get_event_producer
             await get_event_producer().emit_model_call(model_event)
+            await run_recorder.record_event(
+                req_ctx.run_id,
+                "model_call_completed",
+                {
+                    "seq": active_model_call["seq"],
+                    "provider": infer_provider(model),
+                    "model": model,
+                    "prompt_tokens": active_model_call["prompt_tokens"],
+                    "completion_tokens": active_model_call["completion_tokens"],
+                    "duration_ms": duration_ms,
+                    "status": "ok",
+                },
+            )
 
         # Send finish + save response
         if full_response:
             await store.append(session_id, Message(role="assistant", content=full_response))
-        
+
         # Record usage
         usage.tool_calls = tool_count
         usage.duration_ms = int((time.time() - start_time) * 1000)
@@ -502,10 +706,10 @@ async def _stream_agent_response(
 
         response_preview = (full_response[:120] + "...") if len(full_response) > 120 else full_response
         logger.info(
-            "📤 Agent response [session=%s, tools=%d, %dms]: %s",
+            "📤 Agent 响应 [session=%s, tools=%d, %dms]: %s",
             session_id, tool_count, usage.duration_ms, response_preview.replace("\n", " "),
         )
-        
+
         # Publish response summary to Kafka
         from app.events.kafka_producer import get_event_producer
         await get_event_producer().emit_agent_response(
@@ -513,7 +717,7 @@ async def _stream_agent_response(
             usage.prompt_tokens + usage.completion_tokens,
             usage.duration_ms
         )
-        
+
         # Log reranker feedback (which chunks the agent actually used)
         if last_rag_query and file_reads_after_rag:
             try:
@@ -527,12 +731,31 @@ async def _stream_agent_response(
             except Exception:
                 pass  # non-critical
 
+        run_finished_event = await run_recorder.finish_run(
+            req_ctx.run_id,
+            RunStatus.CANCELLED if client_disconnected or cancel_requested else RunStatus.COMPLETED,
+            {
+                "request_id": req_ctx.request_id,
+                "session_id": session_id,
+                "tool_count": tool_count,
+                "duration_ms": usage.duration_ms,
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "terminal_reason": (
+                    "client_disconnected" if client_disconnected
+                    else "cancel_requested" if cancel_requested else "completed"
+                ),
+                "retryable": True if client_disconnected or cancel_requested else False,
+            },
+        )
         yield _make_status_event(
-            "complete",
+            "cancelled" if client_disconnected or cancel_requested else "complete",
+            event_id=run_finished_event.event_id,
             request_id=req_ctx.request_id,
             run_id=req_ctx.run_id,
             tool_count=tool_count,
             duration_ms=int((time.time() - start_time) * 1000),
+            retrieval_trace_ids=retrieval_trace_ids,
         )
         yield _make_chunk('', model, finish_reason='stop')
         yield "[DONE]"
@@ -564,7 +787,34 @@ async def _stream_agent_response(
             )
             from app.events.kafka_producer import get_event_producer
             await get_event_producer().emit_model_call(model_event)
+            await run_recorder.record_event(
+                req_ctx.run_id,
+                "model_call_completed",
+                {
+                    "seq": active_model_call["seq"],
+                    "provider": infer_provider(model),
+                    "model": model,
+                    "prompt_tokens": active_model_call["prompt_tokens"],
+                    "completion_tokens": active_model_call["completion_tokens"],
+                    "duration_ms": duration_ms,
+                    "status": "error",
+                    "error_class": e.__class__.__name__,
+                },
+            )
 
+        retryable = not isinstance(e, (ValueError, PermissionError, KeyError))
+        await run_recorder.finish_run(
+            req_ctx.run_id,
+            RunStatus.FAILED,
+            {
+                "request_id": req_ctx.request_id,
+                "session_id": session_id,
+                "error_class": e.__class__.__name__,
+                "error_message": str(e),
+                "terminal_reason": "agent_error",
+                "retryable": retryable,
+            },
+        )
         error_msg = f"\n\n❌ Agent error: {str(e)}"
         yield _make_chunk(error_msg, model, finish_reason="stop")
         yield "[DONE]"
@@ -577,6 +827,7 @@ async def _stream_agent_response(
         # module docstring). The alternative (waiting for children) would
         # let a stuck spawn block the parent's HTTP response forever.
         await fleet_unregister(session_id)
+        await get_run_cancellation_registry().unregister(req_ctx.run_id)
 
 
 # ── Endpoints ─────────────────────────────────────────────────
@@ -588,7 +839,7 @@ async def chat_completions(
     auth: AuthContext = Depends(require_auth),
 ):
     """OpenAI-compatible chat completions endpoint with streaming.
-    
+
     Pre-processing:
     1. Meta-questions → answer directly (no agent/tools)
     2. Topic switch → reset agent thread for fresh context
@@ -705,6 +956,8 @@ async def chat_completions(
             try:
                 data = json.loads(chunk_str)
                 content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                content = re.sub(r"<!-- TOOL:.*? -->\s*", "", content, flags=re.S)
+                content = re.sub(r"🔧 Using \w+\.\.\.\s*", "", content)
                 full_response += content
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -732,6 +985,186 @@ async def list_models():
             {"id": "coding-agent", "object": "model", "owned_by": "local"},
         ],
     }
+
+
+@router.get("/v1/runs/{run_id}/events")
+async def get_run_events(
+    run_id: str,
+    after_seq: int = 0,
+    auth: AuthContext = Depends(require_auth),
+):
+    """Return recorded runtime events for a run.
+
+    Phase 2 exposes the in-memory event contract for tests and local
+    inspection. Later implementations can keep this endpoint while replacing
+    the recorder with a durable store.
+    """
+    recorder = get_run_recorder()
+    metadata = await recorder.get_metadata(run_id)
+    if metadata is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if metadata["tenant_id"] != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="run does not belong to this tenant")
+
+    events = await recorder.list_events(run_id, after_seq=after_seq)
+    return {
+        "run_id": run_id,
+        "status": metadata["status"],
+        "terminal_reason": metadata.get("terminal_reason"),
+        "retryable": metadata.get("retryable"),
+        "after_seq": after_seq,
+        "events": [event.to_dict() for event in events],
+    }
+
+
+@router.get("/v1/runs/{run_id}/checkpoint")
+async def get_run_checkpoint(run_id: str, auth: AuthContext = Depends(require_auth)):
+    checkpoint = get_checkpoint_store().get(run_id)
+    if checkpoint is None:
+        raise HTTPException(status_code=404, detail="checkpoint not found")
+    metadata = await get_run_recorder().get_metadata(run_id)
+    if metadata is None or metadata["tenant_id"] != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="run does not belong to this tenant")
+    return checkpoint.to_dict()
+
+
+@router.get("/v1/runtime/recoverable")
+async def list_recoverable_runs(auth: AuthContext = Depends(require_auth)):
+    """List expired checkpoints for a tenant-scoped recovery worker."""
+    checkpoints = get_checkpoint_store().list_recoverable()
+    result = []
+    recorder = get_run_recorder()
+    for checkpoint in checkpoints:
+        metadata = await recorder.get_metadata(checkpoint.run_id)
+        if metadata and metadata.get("tenant_id") == auth.tenant_id:
+            result.append(checkpoint.to_dict())
+    return {"checkpoints": result}
+
+
+@router.post("/v1/runs/{run_id}/resume")
+async def resume_run(run_id: str, auth: AuthContext = Depends(require_auth)):
+    """Claim an approved checkpoint for a continuation worker.
+
+    The worker owns actual tool execution; this endpoint only performs the
+    durable state transition and lease claim, so duplicate resume requests
+    cannot execute the same invocation twice.
+    """
+    store = get_checkpoint_store()
+    checkpoint = store.get(run_id)
+    if checkpoint is None:
+        raise HTTPException(status_code=404, detail="checkpoint not found")
+    metadata = await get_run_recorder().get_metadata(run_id)
+    if metadata is None or metadata["tenant_id"] != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="run does not belong to this tenant")
+    if checkpoint.state != "approved":
+        reason = (
+            "executing outcome requires reconciliation"
+            if checkpoint.state == "executing"
+            else "checkpoint is not approved"
+        )
+        return {
+            "accepted": False,
+            "reason": reason,
+            "checkpoint": checkpoint.to_dict(),
+        }
+    from app.runtime.continuation import ContinuationWorker
+    from app.auth.middleware import tenant_context
+    from app.context.request_context import set_request_context
+    from app.registry.tool_registry import get_registered_tools
+
+    worker = ContinuationWorker(store, f"api:{auth.user_id}")
+    await get_idempotency_store().recover_run(run_id)
+    tenant_context.set(auth.tenant_id)
+    set_request_context(
+        request_id=f"resume-{run_id}", run_id=run_id,
+        session_id=checkpoint.payload.get("session_id", metadata["session_id"]),
+    )
+
+    async def execute(checkpoint):
+        tool = get_registered_tools().get(checkpoint.tool_name)
+        if tool is None:
+            raise ValueError(f"checkpoint tool is not registered: {checkpoint.tool_name}")
+        return await tool.ainvoke(checkpoint.payload.get("arguments", {}))
+
+    updated = await worker.run_once_async(run_id, execute)
+    if updated is None:
+        return {"accepted": False, "reason": "lease held", "checkpoint": checkpoint.to_dict()}
+    return {"accepted": True, "checkpoint": updated.to_dict()}
+
+
+@router.post("/v1/runs/{run_id}/cancel")
+async def cancel_run(
+    run_id: str,
+    auth: AuthContext = Depends(require_auth),
+):
+    """Request cooperative cancellation of an active root run."""
+    recorder = get_run_recorder()
+    metadata = await recorder.get_metadata(run_id)
+    if metadata is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if metadata["tenant_id"] != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="run does not belong to this tenant")
+    if metadata["status"] != RunStatus.RUNNING.value:
+        return {"run_id": run_id, "accepted": False, "status": metadata["status"]}
+
+    accepted = await get_run_cancellation_registry().request(run_id)
+    return {
+        "run_id": run_id,
+        "accepted": accepted,
+        "status": "cancellation_requested" if accepted else metadata["status"],
+        "note": "cooperative cancel — honored between runtime events",
+    }
+
+
+@router.get("/v1/approvals/{approval_id}")
+async def get_approval(approval_id: str, auth: AuthContext = Depends(require_auth)):
+    approval = await get_approval_registry().get(approval_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="approval not found")
+    if approval.tenant_id != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="approval does not belong to this tenant")
+    return approval.to_dict()
+
+
+@router.post("/v1/approvals/{approval_id}/decision")
+async def decide_approval(
+    approval_id: str,
+    decision: dict,
+    auth: AuthContext = Depends(require_auth),
+):
+    status = decision.get("status")
+    if status not in {"approved", "rejected"}:
+        raise HTTPException(status_code=400, detail="status must be approved or rejected")
+    approval = await get_approval_registry().get(approval_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="approval not found")
+    if approval.tenant_id != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="approval does not belong to this tenant")
+    approval = await get_approval_registry().decide(
+        approval_id, status=status, decided_by=auth.user_id
+    )
+    if approval.status == "approved":
+        from app.runtime.checkpoint import get_checkpoint_store
+        checkpoint = get_checkpoint_store().get(approval.run_id)
+        if (
+            checkpoint is not None
+            and checkpoint.approval_id == approval.approval_id
+            and checkpoint.state == "waiting_approval"
+        ):
+            get_checkpoint_store().transition(approval.run_id, state="approved")
+    recorder = get_run_recorder()
+    run_metadata = await recorder.get_metadata(approval.run_id)
+    if run_metadata is not None and run_metadata.get("tenant_id") == auth.tenant_id:
+        await recorder.record_event(
+            approval.run_id,
+            "approval_decided",
+            {
+                "approval_id": approval.approval_id,
+                "status": approval.status,
+                "decided_by": approval.decided_by,
+            },
+        )
+    return approval.to_dict()
 
 
 @router.post("/v1/sessions/{session_id}/children/{child_id}/cancel")

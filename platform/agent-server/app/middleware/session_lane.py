@@ -27,7 +27,7 @@ async def _get_redis():
     return _redis
 
 
-async def acquire_session_lock(session_id: str, timeout: int = 120) -> bool:
+async def acquire_session_lock(session_id: str, timeout: int = 900) -> bool:
     """Try to acquire exclusive lock for a session.
 
     Returns True if acquired, False if already locked.
@@ -55,6 +55,18 @@ async def release_session_lock(session_id: str) -> None:
         await r.delete(key)
     except Exception as e:
         logger.debug("Session lock release failed (Redis): %s", e)
+
+
+async def session_lock_held(session_id: str) -> bool:
+    """Return whether another turn currently owns the session lane."""
+    try:
+        r = await _get_redis()
+        if r is None:
+            return False
+        return bool(await r.exists(f"session_lane:{session_id}"))
+    except Exception as e:
+        logger.debug("Session lock state unavailable (Redis): %s", e)
+        return False
 
 
 async def wait_for_session_lock(

@@ -15,7 +15,7 @@ import java.util.Map;
 /**
  * Global exception handler — centralizes error formatting for all auth endpoints.
  *
- * <p>Alibaba Exception Handling #13 (DRY): replaces 9+ duplicated try-catch blocks in AuthController.</p>
+ * <p>Alibaba 异常处理 #13 (DRY): replaces 9+ duplicated try-catch blocks in AuthController.</p>
  * <p>Security (S1): never exposes e.getMessage() — uses fixed messages instead.</p>
  */
 @RestControllerAdvice(basePackages = "com.example.auth.api")

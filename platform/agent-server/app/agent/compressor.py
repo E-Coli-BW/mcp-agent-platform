@@ -16,16 +16,15 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
     HumanMessage,
-    SystemMessage,
     ToolMessage,
 )
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +32,7 @@ logger = logging.getLogger(__name__)
 # ── Investigation State (structured extraction) ───────────────────────────────
 
 
-@dataclass
-class InvestigationState:
+class InvestigationState(BaseModel):
     """Structured extraction of the current investigation.
 
     Updated after every meaningful tool call. Survives compression because
@@ -45,12 +43,12 @@ class InvestigationState:
     """
 
     goal: str = ""
-    confirmed_facts: list[str] = field(default_factory=list)
+    confirmed_facts: list[str] = Field(default_factory=list)
     current_hypothesis: str = ""
-    eliminated: list[str] = field(default_factory=list)  # "X because Y"
-    key_artifacts: dict[str, str] = field(default_factory=dict)  # filename → snippet
-    skills_used: list[str] = field(default_factory=list)  # skill keys applied
-    next_steps: list[str] = field(default_factory=list)
+    eliminated: list[str] = Field(default_factory=list)  # "X because Y"
+    key_artifacts: dict[str, str] = Field(default_factory=dict)  # filename → snippet
+    skills_used: list[str] = Field(default_factory=list)  # skill keys applied
+    next_steps: list[str] = Field(default_factory=list)
 
     def to_summary_block(self) -> str:
         """Render as a compact block for injection into system prompt after compression."""
@@ -84,29 +82,52 @@ class InvestigationState:
         return len(self.to_summary_block()) // 4
 
 
+@dataclass(frozen=True)
+class CompressionResult:
+    """Model-facing compressed view plus an explicit budget outcome."""
+
+    messages: list[BaseMessage]
+    summary: str
+    overflow: bool
+    used_chars: int
+    budget_chars: int
+
+    def __iter__(self):
+        """Preserve tuple-unpacking compatibility for existing callers."""
+        yield self.messages
+        yield self.summary
+
+
 # ── Compression Logic ─────────────────────────────────────────────────────────
 
 
-def estimate_tokens(messages: list[BaseMessage] | str) -> int:
-    """Rough token estimation: 4 chars ≈ 1 token."""
+def estimate_chars(messages: list[BaseMessage] | str) -> int:
+    """Estimate prompt size in the configured character-budget unit."""
     if isinstance(messages, str):
-        return len(messages) // 4
+        return len(messages)
     total = 0
-    for m in messages:
-        content = m.content if isinstance(m.content, str) else str(m.content)
-        total += len(content) // 4
+    for message in messages:
+        content = message.content if isinstance(message.content, str) else str(message.content)
+        total += len(content)
+        if isinstance(message, AIMessage) and message.tool_calls:
+            total += len(str(message.tool_calls))
     return total
+
+
+def estimate_tokens(messages: list[BaseMessage] | str) -> int:
+    """Backward-compatible rough token estimate for metrics only."""
+    return estimate_chars(messages) // 4
 
 
 def compress_messages(
     messages: list[BaseMessage],
-    budget_tokens: int,
+    budget_chars: int,
     investigation: InvestigationState | None = None,
-) -> tuple[list[BaseMessage], str]:
+) -> CompressionResult:
     """Compress message history to fit within budget.
 
     Returns:
-        (compressed_messages, summary_of_dropped)
+        CompressionResult with the model view and explicit overflow status.
 
     Strategy:
         1. Always keep: first HumanMessage (original goal), last 6 messages
@@ -115,22 +136,30 @@ def compress_messages(
         4. Failed tool calls → "❌ [tool] failed: [first line of error]"
         5. Middle conversation turns → summarize to key points
     """
+    budget_chars = max(0, budget_chars)
     if not messages:
-        return messages, ""
+        return CompressionResult(messages, "", False, 0, budget_chars)
 
-    current_tokens = estimate_tokens(messages)
-    if current_tokens <= budget_tokens:
-        return messages, ""
+    current_chars = estimate_chars(messages)
+    if current_chars <= budget_chars:
+        return CompressionResult(
+            messages,
+            "",
+            False,
+            current_chars,
+            budget_chars,
+        )
 
     # Split into: first message (goal), middle, recent tail
     first_human_idx = next(
         (i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), 0
     )
-    # Keep last 6 messages verbatim (active working context)
-    tail_size = min(6, len(messages))
-    tail = messages[-tail_size:]
-    middle = messages[first_human_idx + 1 : -tail_size] if len(messages) > tail_size + 1 else []
-    head = messages[: first_human_idx + 1]
+    # Keep the original goal and up to six recent messages as disjoint regions.
+    head_end = first_human_idx + 1
+    tail_start = max(head_end, len(messages) - 6)
+    head = messages[:head_end]
+    middle = messages[head_end:tail_start]
+    tail = messages[tail_start:]
 
     # Compress middle section
     compressed_middle: list[BaseMessage] = []
@@ -204,83 +233,54 @@ def compress_messages(
         else:
             compressed_middle.append(msg)
 
-    # Build final compressed list
-    result = head + compressed_middle + tail
-
     # If we have investigation state, inject confirmed facts as a synthetic message
     # so the LLM retains critical info even after aggressive compression
+    facts_messages: list[BaseMessage] = []
     if investigation and investigation.confirmed_facts:
-        facts_block = "[INVESTIGATION STATE — retained from earlier turns]\n" + investigation.to_summary_block()
-        facts_msg = HumanMessage(content=facts_block)
-        # Insert after head, before compressed middle
-        result = head + [facts_msg] + compressed_middle + tail
+        facts_block = (
+            "[INVESTIGATION STATE — retained from earlier turns]\n"
+            + investigation.to_summary_block()
+        )
+        facts_messages = [HumanMessage(id="investigation-state-view", content=facts_block)]
+
+    # Build final compressed list. Facts are a dedicated component so every
+    # degradation pass preserves them.
+    result = head + facts_messages + compressed_middle + tail
 
     summary = "\n".join(summary_lines) if summary_lines else ""
 
     # If still over budget, drop oldest middle messages
-    while estimate_tokens(result) > budget_tokens and len(compressed_middle) > 0:
+    while estimate_chars(result) > budget_chars and compressed_middle:
         dropped = compressed_middle.pop(0)
         content = dropped.content if isinstance(dropped.content, str) else str(dropped.content)
         summary_lines.append(f"[dropped {type(dropped).__name__}: {content[:50]}...]")
-        result = head + compressed_middle + tail
+        result = head + facts_messages + compressed_middle + tail
         summary = "\n".join(summary_lines)
 
-    new_tokens = estimate_tokens(result)
+    used_chars = estimate_chars(result)
+    overflow = used_chars > budget_chars
     logger.info(
-        "📦 Compression: %d → %d tokens (%.0f%% reduction), %d items summarized",
-        current_tokens, new_tokens,
-        (1 - new_tokens / current_tokens) * 100 if current_tokens > 0 else 0,
+        "📦 Compression: %d → %d chars (%.0f%% reduction), %d items summarized, overflow=%s",
+        current_chars,
+        used_chars,
+        (1 - used_chars / current_chars) * 100 if current_chars > 0 else 0,
         len(summary_lines),
+        overflow,
     )
 
-    return result, summary
+    return CompressionResult(
+        messages=result,
+        summary=summary,
+        overflow=overflow,
+        used_chars=used_chars,
+        budget_chars=budget_chars,
+    )
 
 
 def _extract_skill_key(content: str) -> str:
     """Extract skill key from '[SKILL ACTIVATED: key-name]' block."""
     match = re.search(r"\[SKILL ACTIVATED:\s*([^\]]+)\]", content)
     return match.group(1).strip() if match else "unknown"
-
-
-# ── Graph Node Factory ────────────────────────────────────────────────────────
-
-
-def make_context_compressor_node(budget_tokens: int = 4000, threshold: float = 0.75):
-    """Creates a graph node that compresses context when budget is exceeded.
-
-    Args:
-        budget_tokens: Maximum token budget for conversation history.
-        threshold: Trigger compression when usage exceeds this fraction of budget.
-    """
-
-    def context_compressor(state) -> dict[str, Any]:
-        """Conditionally compress conversation history."""
-        messages = list(state.messages)
-        current_tokens = estimate_tokens(messages)
-        trigger_at = int(budget_tokens * threshold)
-
-        if current_tokens <= trigger_at:
-            return {}  # no-op
-
-        logger.info(
-            "🗜️ Context compressor triggered: %d tokens > %d threshold",
-            current_tokens, trigger_at,
-        )
-
-        # Get investigation state if available
-        investigation = getattr(state, "investigation", None)
-
-        compressed, summary = compress_messages(messages, budget_tokens, investigation)
-
-        result: dict[str, Any] = {"messages": compressed}
-
-        # Store summary for reference
-        if summary:
-            result["compression_summary"] = summary
-
-        return result
-
-    return context_compressor
 
 
 # ── Investigation State Updater ───────────────────────────────────────────────

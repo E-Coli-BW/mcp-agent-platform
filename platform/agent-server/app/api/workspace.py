@@ -23,21 +23,36 @@ def _should_ignore(name: str) -> bool:
     return any(name.endswith(pat.lstrip('*')) for pat in IGNORE if pat.startswith('*'))
 
 
+def _allowed_workspace_roots() -> list[Path]:
+    return [
+        Path.home().resolve(),
+        Path("/tmp").resolve(),
+        Path("/private/tmp").resolve(),
+        Path("/var/folders").resolve(),
+        Path("/private/var").resolve(),
+    ]
+
+
+def _is_allowed_workspace_path(path: str) -> bool:
+    candidate = Path(path).resolve()
+    return any(candidate.is_relative_to(root) for root in _allowed_workspace_roots())
+
+
 def _build_tree(root: str, rel: str = "", depth: int = 0, max_depth: int = 5) -> list[dict]:
     """Build a file tree as a list of nodes."""
     if depth > max_depth:
         return []
-    
+
     full = os.path.join(root, rel) if rel else root
     if not os.path.isdir(full):
         return []
-    
+
     entries = []
     try:
         items = sorted(os.listdir(full), key=lambda x: (not os.path.isdir(os.path.join(full, x)), x.lower()))
     except PermissionError:
         return []
-    
+
     for name in items:
         if _should_ignore(name):
             continue
@@ -79,7 +94,7 @@ class OpenWorkspaceRequest(BaseModel):
 @router.post("/open")
 async def open_workspace(req: OpenWorkspaceRequest):
     """Switch the workspace root at runtime.
-    
+
     Security: resolves symlinks and blocks paths outside user's home directory.
     This prevents path traversal attacks like "~root" or "/etc".
     """
@@ -87,18 +102,12 @@ async def open_workspace(req: OpenWorkspaceRequest):
     resolved = os.path.realpath(path)
 
     # Security: block paths outside user's home directory
-    home = os.path.realpath(os.path.expanduser("~"))
-    # Allow /tmp for testing + anything under home directory
-    allowed_prefixes = [home, "/tmp", "/private/tmp", "/var/folders", "/private/var"]  # macOS uses /private
-    if not any(resolved.startswith(prefix) for prefix in allowed_prefixes):
+    if not _is_allowed_workspace_path(resolved):
         raise HTTPException(403, f"Path '{req.path}' is outside allowed directories. Must be under home or /tmp.")
 
     if not os.path.isdir(resolved):
-        try:
-            Path(resolved).mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            raise HTTPException(400, f"Cannot create directory: {e}")
-    
+        raise HTTPException(400, f"Workspace directory does not exist: {req.path}")
+
     set_workspace_root(resolved)
     return {"path": get_workspace_root(), "message": f"Workspace set to {get_workspace_root()}"}
 
@@ -111,13 +120,11 @@ async def browse_directory(path: str = Query("~", description="Directory to list
     expanded = os.path.expanduser(path)
     resolved = os.path.realpath(expanded)
 
-    home = os.path.realpath(os.path.expanduser("~"))
-    allowed_prefixes = [home, "/tmp", "/private/tmp"]
-    if not any(resolved.startswith(prefix) for prefix in allowed_prefixes):
+    if not _is_allowed_workspace_path(resolved):
         raise HTTPException(403, "Path outside allowed directories")
 
     if not os.path.isdir(resolved):
-        return {"path": resolved, "dirs": []}
+        raise HTTPException(404, f"Directory not found: {path}")
 
     dirs = []
     try:
@@ -126,11 +133,15 @@ async def browse_directory(path: str = Query("~", description="Directory to list
                 continue
             full = os.path.join(resolved, name)
             if os.path.isdir(full) and not _should_ignore(name):
-                dirs.append({"name": name, "path": os.path.join(path, name)})
+                dirs.append({"name": name, "path": os.path.realpath(full)})
     except PermissionError:
         pass
 
-    return {"path": resolved, "dirs": dirs}
+    parent = os.path.dirname(resolved)
+    if parent == resolved or not _is_allowed_workspace_path(parent):
+        parent = None
+
+    return {"path": resolved, "parent": parent, "dirs": dirs}
 
 
 @router.get("/files")
@@ -153,14 +164,14 @@ async def read_file(path: str = Query(..., description="Relative path within wor
 
     if not os.path.isfile(resolved):
         raise HTTPException(404, f"File not found: {path}")
-    
+
     # Check if binary
     try:
         with open(resolved, 'r', encoding='utf-8') as f:
             content = f.read(500_000)  # 500KB limit
     except UnicodeDecodeError:
         raise HTTPException(400, "Binary file — cannot display")
-    
+
     # Detect language from extension
     ext_map = {
         '.py': 'python', '.js': 'javascript', '.ts': 'typescript', '.tsx': 'typescript',
@@ -172,5 +183,5 @@ async def read_file(path: str = Query(..., description="Relative path within wor
     }
     ext = os.path.splitext(path)[1].lower()
     language = ext_map.get(ext, 'plaintext')
-    
+
     return {"path": path, "content": content, "language": language}

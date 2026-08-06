@@ -111,9 +111,10 @@ cp runs/2026-05-29T10-23-12/summary.json baselines/master.json
 ## n-of-k flakiness tolerance
 
 LLM-in-loop evals at T>0 are non-deterministic. A single run is **not
-evidence** — our experience during the subagent fleet rollout showed how
-single-run "greens" can be misleading (one case shipped with a 1-of-1 lucky
-run; the real pass rate at clean HEAD was 3/5).
+evidence** — `skill-engineering-effect-eval-iteration` documents how
+single-run "greens" misled us during the subagent fleet rollout (P1 #1
+shipped with a 1-of-1 lucky run; the real pass rate at clean HEAD was
+3/5).
 
 The harness supports n-of-k via two knobs:
 
@@ -135,7 +136,7 @@ expected:
   final_must_contain: ["embarrassingly parallel"]
   # On Qwen2.5:7b @ T=0.7 this case is empirically 3/5. Document the
   # ceiling here; bump back to 1.0 once we move to a less-flaky model
-  # or fix the temperature plumbing.
+  # or fix the temperature plumbing (latent bug D).
   min_pass_rate: 0.6
 ```
 

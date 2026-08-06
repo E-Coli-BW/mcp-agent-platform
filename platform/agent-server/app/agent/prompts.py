@@ -90,6 +90,7 @@ SYSTEM_PROMPT_V2 = (
     "\n"
     "TOOL USAGE:\n"
     "- file_list → mention relevant files only, not full tree\n"
+    "- All file paths are relative to the workspace root. Never prepend the displayed workspace-root label to a path.\n"
     "- file_read → summarize key findings, don't paste contents\n"
     "- file_write/file_edit → say \"Updated <file>: <1-line description>\"\n"
     "- rag_search → use results silently to inform your answer\n"

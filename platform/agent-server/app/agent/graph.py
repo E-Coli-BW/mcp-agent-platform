@@ -20,7 +20,6 @@ Memory model:
 """
 
 import asyncio
-import functools
 from typing import TYPE_CHECKING
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -114,13 +113,13 @@ def _summarize_tool_messages(messages: list, max_tool_chars: int = 1500) -> list
 
 def _make_state_modifier(system_prompt: str):
     """Create a state modifier that trims messages to fit context window.
-    
+
     WHAT IS A STATE MODIFIER?
     LangGraph calls this function BEFORE every LLM invocation. It receives
     the full conversation state and returns the messages to send to the LLM.
     The original state in MemorySaver is NOT modified — only the LLM sees
     the compressed version. This is like a "view" in database terms.
-    
+
     EXECUTION TIMING:
     1. User sends message → appended to MemorySaver
     2. state_modifier runs (this function) → compresses for LLM
@@ -128,13 +127,13 @@ def _make_state_modifier(system_prompt: str):
     4. Response appended to MemorySaver (full, uncompressed)
     5. If LLM called a tool → tool executes → result appended
     6. Go to step 2 (state_modifier runs again before next LLM call)
-    
+
     RETRY MECHANISM:
     Small models (7B) sometimes produce malformed tool calls — e.g., outputting
     JSON that doesn't match the tool schema, or mixing text with tool calls.
     When this happens, the tool returns an error. We detect consecutive errors
     and append a corrective hint to help the LLM recover, up to 3 retries.
-    
+
     MEMORY BUDGET:
     For a 7B model with 32K context window:
     - System prompt: ~500 tokens (~2K chars)
@@ -162,7 +161,7 @@ def _make_state_modifier(system_prompt: str):
         # state["messages"] contains the FULL conversation history from MemorySaver
         # This includes: HumanMessage, AIMessage, ToolMessage, and AIMessageChunk
         messages = state["messages"]
-        
+
         # ── Step 0: LLM Output Retry ──────────────────────────────
         # Check if the last message is a tool error (malformed LLM output)
         # This catches cases where the 7B model produces invalid JSON for tool calls
@@ -186,11 +185,11 @@ def _make_state_modifier(system_prompt: str):
                     # The LLM will see this and (hopefully) produce a valid response
                     # Note: list(messages) creates a shallow copy to avoid mutating MemorySaver
                     messages = list(messages) + [HumanMessage(content=RETRY_HINT)]
-        
+
         # ── Step 1: Compress old tool outputs ─────────────────────
         # This is the main defense against context death spiral
         messages = _summarize_tool_messages(messages)
-        
+
         # ── Step 2: Hard character budget ─────────────────────────
         # Even after tool compression, if conversation is very long,
         # drop the oldest messages to stay within budget
@@ -200,7 +199,7 @@ def _make_state_modifier(system_prompt: str):
             len(m.content) if isinstance(m.content, str) else len(str(m.content))
             for m in messages
         )
-        
+
         if total_chars > max_chars:
             # Iterate from newest to oldest, keeping messages until budget exhausted
             # This ensures the MOST RECENT messages (most relevant) are always kept
@@ -217,12 +216,12 @@ def _make_state_modifier(system_prompt: str):
                 kept.insert(0, msg)  # Prepend to maintain order
                 running += msg_len
             messages = kept
-        
+
         # ── Step 3: Prepend system prompt ─────────────────────────
         # System prompt is ALWAYS first — it defines the agent's behavior
         # LangGraph will pass this list directly to the LLM's chat API
         return [SystemMessage(content=full_prompt)] + messages
-    
+
     return modifier
 
 
@@ -287,12 +286,12 @@ def _create_chat_model(
 ) -> BaseChatModel:
     """Factory: create the right LangChain ChatModel based on provider.
 
-    WHY A FACTORY? LangGraph's create_react_agent() requires the model to 
+    WHY A FACTORY? LangGraph's create_react_agent() requires the model to
     implement bind_tools() — this method converts our tool definitions into
     the provider's native format (e.g., Ollama's JSON tools parameter,
     OpenAI's function calling format). Each provider has a DIFFERENT format,
     so we MUST use the native LangChain class for each provider.
-    
+
     WHY NOT A GENERIC WRAPPER? (Pitfall #20)
     We originally tried a custom ChatModel wrapper that would work with any
     provider. It failed because bind_tools() needs provider-specific knowledge:
@@ -300,7 +299,7 @@ def _create_chat_model(
     - OpenAI: sends as 'functions' or 'tools' parameter
     - Anthropic: sends as 'tools' with different schema format
     A generic wrapper can't know these differences.
-    
+
     LAZY IMPORTS: Provider-specific packages (langchain_openai, langchain_ollama)
     are imported inside the if-branches to avoid ImportError when a provider's
     package isn't installed. This means you only need `pip install langchain-ollama`
@@ -311,8 +310,8 @@ def _create_chat_model(
 
     `temperature`: per-call override. None ⇒ settings.default_temperature.
     Used by the chat API to honour the OpenAI-compatible `temperature`
-    field on incoming requests (previously dropped silently before this
-    was wired through).
+    field on incoming requests (previously dropped silently — was
+    latent bug D in EVAL-ITERATION-REPORT-2026-05-29.md).
     """
     name = model_name or settings.default_model
     # Resolve temperature once so all branches get the same value; lets the
@@ -431,7 +430,25 @@ def _create_checkpointer():
     import logging
     _log = logging.getLogger(__name__)
 
-    # 1) Redis — but only if REDIS_URL is *explicitly* set. Otherwise we'd
+    # 0) SQLite runtime store — deterministic local persistence for dev and
+    # single-node deployments. This keeps LangGraph thread state aligned with
+    # the runtime checkpoint database used by approval recovery.
+    if os.environ.get("AGENT_RUNTIME_STORE_BACKEND", "memory").strip().lower() == "sqlite" and _async_checkpointer is None:
+        try:
+            from langgraph.checkpoint.sqlite import SqliteSaver
+            from app.config import settings
+            cm = SqliteSaver.from_conn_string(settings.runtime_store_sqlite_path)
+            checkpointer = cm.__enter__()
+            checkpointer._cm_owner = cm  # type: ignore[attr-defined]
+            checkpointer.setup()
+            _log.info("Using SQLite LangGraph checkpointer")
+            return checkpointer
+        except ImportError:
+            _log.warning("langgraph-checkpoint-sqlite is not installed; falling back to other backends")
+        except Exception as e:
+            _log.warning("SQLite LangGraph checkpointer unavailable: %s", e)
+
+    # 1) Redis — but only if REDIS_URL is explicitly set. Otherwise we'd
     # try to connect to localhost:6379 on every boot and get noisy timeouts
     # in dev (where Redis is usually not running).
     redis_url = os.environ.get("REDIS_URL")
@@ -478,10 +495,35 @@ def _create_checkpointer():
 # Lazy-initialized checkpointer — avoids blocking server startup
 # if Redis/Postgres are slow to respond
 _checkpointer = None
+_async_checkpointer = None
+_async_checkpointer_cm = None
+
+
+async def _ensure_async_checkpointer():
+    """Enter AsyncSqliteSaver once before creating async LangGraph agents."""
+    global _async_checkpointer, _async_checkpointer_cm
+    if _async_checkpointer is not None:
+        return _async_checkpointer
+    import os
+    if os.environ.get("AGENT_RUNTIME_STORE_BACKEND", "memory").strip().lower() != "sqlite":
+        return None
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    from app.config import settings
+    # Keep LangGraph's high-frequency checkpoint writes in a companion file.
+    # Sharing the runtime event SQLite file causes writer contention between
+    # the recorder and LangGraph's async saver under streaming workloads.
+    checkpoint_path = settings.runtime_store_sqlite_path + ".langgraph"
+    cm = AsyncSqliteSaver.from_conn_string(checkpoint_path)
+    _async_checkpointer = await cm.__aenter__()
+    _async_checkpointer_cm = cm
+    await _async_checkpointer.setup()
+    return _async_checkpointer
 
 
 def _get_checkpointer():
     global _checkpointer
+    if _async_checkpointer is not None:
+        return _async_checkpointer
     if _checkpointer is None:
         _checkpointer = _create_checkpointer()
     return _checkpointer
@@ -489,7 +531,7 @@ def _get_checkpointer():
 
 def create_agent(model_name: str | None = None, temperature: float | None = None):
     """Create a LangGraph ReAct agent with all tools.
-    
+
     WHAT create_react_agent DOES INTERNALLY:
     1. Takes the model and binds tools to it (model.bind_tools(tools))
     2. Creates a graph with two nodes: "agent" (LLM) and "tools" (executor)
@@ -499,11 +541,11 @@ def create_agent(model_name: str | None = None, temperature: float | None = None
     4. Tools node executes the tool, appends result as ToolMessage
     5. Routes back to agent node (LLM sees the tool result and decides next step)
     6. This loop continues until LLM returns text (no tool call) or max steps reached
-    
+
     prompt: Called BEFORE each LLM invocation to compress the message
     history. The full history stays in MemorySaver; only the LLM sees compressed.
     (Replaces the deprecated state_modifier parameter in newer LangGraph versions.)
-    
+
     checkpointer: Persists conversation state across API calls (same session_id
     = same conversation thread). Without this, each API call would start fresh.
 
@@ -515,12 +557,14 @@ def create_agent(model_name: str | None = None, temperature: float | None = None
     # Wrap every tool with output truncation (defense-in-depth)
     # Uses get_tools() for lazy re-probing of backend availability
     from app.tools.definitions import get_tools
+    from app.runtime.tool_authorization import wrap_tool_with_authorization
     max_output = settings.max_tool_output
     truncated_tools = [_truncate_tool_output(t, max_output) for t in get_tools()]
+    execution_tools = [wrap_tool_with_authorization(t) for t in truncated_tools]
 
     agent = create_react_agent(
         model=model,
-        tools=truncated_tools,
+        tools=execution_tools,
         prompt=_make_state_modifier(get_system_prompt()),
         checkpointer=_get_checkpointer(),
     )
@@ -537,16 +581,21 @@ def create_agent_from_config(config: "AgentConfig", temperature: float | None = 
     instance. Set per-request via the OpenAI-compat `temperature` field.
     """
     from app.registry.tool_registry import resolve_tools
+    from app.context.request_context import set_agent_contract
+    from app.runtime.tool_authorization import wrap_tool_with_authorization
+
+    set_agent_contract(config.id, config.knowledge.get("collection", ""))
 
     model = _create_chat_model_with_fallback(config.model, temperature=temperature)
     tools = resolve_tools(config.tools)
     max_output = config.guardrails.get("max_tool_output", settings.max_tool_output)
     truncated_tools = [_truncate_tool_output(t, max_output) for t in tools]
+    execution_tools = [wrap_tool_with_authorization(t) for t in truncated_tools]
 
     prompt = config.prompt or get_system_prompt()
     return create_react_agent(
         model=model,
-        tools=truncated_tools,
+        tools=execution_tools,
         prompt=_make_state_modifier(prompt),
         checkpointer=_get_checkpointer(),
     )
@@ -600,7 +649,7 @@ async def get_agent(
     resolved_temp = temperature if temperature is not None else settings.default_temperature
     from app.agent.prompts import resolve_system_prompt
     from app.auth.middleware import tenant_context
-    from app.context.request_context import set_prompt_version
+    from app.context.request_context import set_agent_contract, set_prompt_version
 
     effective_tenant = tenant_id or tenant_context.get() or "default"
     prompt_resolution = resolve_system_prompt(
@@ -619,12 +668,17 @@ async def get_agent(
     )
 
     async with _agent_lock:
+        await _ensure_async_checkpointer()
         configs = load_all_configs(settings.agent_config_dir)
         config = configs.get(cache_key[0])
 
         use_v2 = settings.agent_graph_version == "v2"
 
         if config is not None:
+            set_agent_contract(
+                config.id,
+                config.knowledge.get("collection", ""),
+            )
             current_tool_names = set(config.tools)
             cached_tools = _agent_tool_names.get(cache_key, set())
             if cache_key not in _agents or current_tool_names != cached_tools:
@@ -648,6 +702,7 @@ async def get_agent(
                 _agent_tool_names[cache_key] = current_tool_names
             return _agents[cache_key]
 
+        set_agent_contract("", "")
         current_tools = get_tools()
         current_tool_names = set(t.name for t in current_tools)
         cached_tools = _agent_tool_names.get(cache_key, set())

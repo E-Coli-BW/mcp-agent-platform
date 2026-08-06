@@ -4,18 +4,25 @@ Tests the individual nodes and routing logic in isolation,
 without requiring an LLM runtime.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph import END, START, StateGraph
 
+from app.agent.compressor import InvestigationState, estimate_chars
 from app.agent.graph_v2 import (
     AgentState,
+    ContextBudgetExceededError,
     _build_llm_messages,
+    _build_llm_view,
+    build_agent_graph,
     inject_context_node,
-    make_compress_history_node,
     make_error_tracking_node,
+    make_hallucination_fix_node,
     make_route_node,
+    update_investigation_node,
 )
 
 
@@ -28,9 +35,24 @@ def test_agent_state_defaults():
     assert state.workspace_context == ""
     assert state.loop_counter == 0
     assert state.consecutive_errors == 0
+    assert state.investigation == InvestigationState()
     # Reflexion (C1) — critique_attempts must start at 0 so the cap
     # logic in reflexion.py works on fresh state.
     assert state.critique_attempts == 0
+
+
+def test_build_agent_graph_uses_model_view_only_compression():
+    graph = build_agent_graph(
+        model=MagicMock(),
+        tools=[],
+        system_prompt="system",
+    )
+
+    node_names = set(graph.get_graph().nodes)
+    assert "update_investigation_initial" in node_names
+    assert "update_investigation_tools" in node_names
+    assert "compress_history" not in node_names
+    assert "context_compressor" not in node_names
 
 
 # ── inject_context_node ──────────────────────────────────────
@@ -70,17 +92,51 @@ def test_build_llm_messages_prepends_system_prompt():
 
 def test_build_llm_messages_enforces_char_budget():
     # Create messages that exceed budget
-    long_msgs = [HumanMessage(content="x" * 5000) for _ in range(10)]
+    long_msgs = [HumanMessage(id=f"message-{index}", content="x" * 1000) for index in range(20)]
     state = AgentState(messages=long_msgs)
     with patch("app.agent.graph_v2.settings") as mock_settings:
         mock_settings.max_context_chars = 10000
         msgs = _build_llm_messages(state, "system")
-    # Should have dropped oldest messages
-    # System prompt + some subset of messages
-    total_chars = sum(
-        len(m.content) for m in msgs if not isinstance(m, SystemMessage)
+    assert estimate_chars(msgs) <= 10000
+
+
+def test_build_llm_view_budgets_system_workspace_and_skills():
+    state = AgentState(
+        messages=[HumanMessage(content="m" * 1000)],
+        workspace_context="w" * 6000,
+        skills_catalog="s" * 3000,
     )
-    assert total_chars <= 10000
+    with patch("app.agent.graph_v2.settings") as mock_settings:
+        mock_settings.max_context_chars = 5000
+        view = _build_llm_view(state, "system")
+
+    assert view.overflow is False
+    assert view.total_chars <= 5000
+    assert "optional context truncated" in view.compression_summary
+
+
+def test_build_llm_messages_raises_when_required_floor_exceeds_budget():
+    state = AgentState(messages=[HumanMessage(content="x" * 5000)])
+    with patch("app.agent.graph_v2.settings") as mock_settings:
+        mock_settings.max_context_chars = 1000
+        with pytest.raises(ContextBudgetExceededError):
+            _build_llm_messages(state, "system")
+
+
+def test_build_llm_view_injects_structured_investigation_facts():
+    messages = [HumanMessage(content="fix the bug")]
+    messages.extend(AIMessage(content="middle" * 200) for _ in range(8))
+    messages.extend(AIMessage(content="recent" * 15) for _ in range(6))
+    state = AgentState(
+        messages=messages,
+        investigation=InvestigationState(confirmed_facts=["root cause confirmed"]),
+    )
+    with patch("app.agent.graph_v2.settings") as mock_settings:
+        mock_settings.max_context_chars = 1200
+        view = _build_llm_view(state, "system")
+
+    assert view.overflow is False
+    assert any("root cause confirmed" in str(message.content) for message in view.messages)
 
 
 def test_build_llm_messages_compresses_old_tool_messages():
@@ -103,10 +159,65 @@ def test_build_llm_messages_compresses_old_tool_messages():
         )
 
     state = AgentState(messages=messages)
-    with patch("app.agent.graph._smart_compress", return_value="compressed") as mock:
+    with patch("app.agent.graph_v2.settings") as mock_settings:
+        mock_settings.max_context_chars = 12000
         msgs = _build_llm_messages(state, "system")
-        # First 2 tool messages should be compressed (indices 0,1 of 6 tool msgs)
-        assert mock.call_count >= 2
+    model_tool_messages = [message for message in msgs if isinstance(message, ToolMessage)]
+    assert len(model_tool_messages[0].content) < 3000
+    persisted_tool_messages = [
+        message for message in state.messages if isinstance(message, ToolMessage)
+    ]
+    assert len(persisted_tool_messages[0].content) == 3000
+
+
+def test_update_investigation_node_extracts_confirmed_fact():
+    state = AgentState(
+        messages=[
+            HumanMessage(content="fix the race"),
+            AIMessage(content="The root cause is concurrent mutation of the cache."),
+        ]
+    )
+
+    result = update_investigation_node(state)
+
+    assert result["investigation"].goal == "fix the race"
+    assert "concurrent mutation" in result["investigation"].confirmed_facts[0]
+    assert state.investigation == InvestigationState()
+
+
+def _build_investigation_checkpoint_graph(checkpointer):
+    graph = StateGraph(AgentState)
+    graph.add_node("update_investigation", update_investigation_node)
+    graph.add_edge(START, "update_investigation")
+    graph.add_edge("update_investigation", END)
+    return graph.compile(checkpointer=checkpointer)
+
+
+def test_checkpoint_round_trip_preserves_messages_and_investigation(tmp_path):
+    database = str(tmp_path / "agent-state.sqlite3")
+    config = {"configurable": {"thread_id": "compression-contract"}}
+    messages = [
+        HumanMessage(id="goal", content="fix the race"),
+        AIMessage(
+            id="finding",
+            content="The root cause is concurrent mutation of the cache.",
+        ),
+    ]
+
+    with SqliteSaver.from_conn_string(database) as first_saver:
+        first_saver.setup()
+        graph = _build_investigation_checkpoint_graph(first_saver)
+        graph.invoke({"messages": messages}, config)
+
+    with SqliteSaver.from_conn_string(database) as second_saver:
+        second_saver.setup()
+        graph = _build_investigation_checkpoint_graph(second_saver)
+        state = graph.get_state(config).values
+
+    assert [message.id for message in state["messages"]] == ["goal", "finding"]
+    investigation = InvestigationState.model_validate(state["investigation"])
+    assert investigation.goal == "fix the race"
+    assert "concurrent mutation" in investigation.confirmed_facts[0]
 
 
 # ── route ─────────────────────────────────────────────────────
@@ -255,41 +366,9 @@ def test_track_errors_detects_status_error():
     assert result["consecutive_errors"] == 1
 
 
-# ── compress_history ──────────────────────────────────────────
+def test_hallucination_fix_receives_available_tools():
+    state = AgentState(messages=[HumanMessage(content="remember my name is Hao")])
 
+    result = make_hallucination_fix_node({"memory_set"})(state)
 
-def test_compress_history_noop_when_few_tools():
-    compressor = make_compress_history_node()
-    state = AgentState(
-        messages=[
-            ToolMessage(content="short", tool_call_id="1", name="x", id="t1"),
-            ToolMessage(content="short", tool_call_id="2", name="x", id="t2"),
-        ]
-    )
-    result = compressor(state)
-    assert result == {}
-
-
-def test_compress_history_compresses_old_large_tools():
-    compressor = make_compress_history_node()
-    messages = []
-    for i in range(6):
-        messages.append(
-            ToolMessage(
-                content="x" * 3000,
-                tool_call_id=f"call_{i}",
-                name="file_read",
-                id=f"tool_{i}",
-            )
-        )
-
-    state = AgentState(messages=messages)
-    with patch("app.agent.graph._smart_compress", return_value="compressed") as mock:
-        result = compressor(state)
-
-    assert "messages" in result
-    # Should have compressed the first 2 (6 - 4 = 2 old ones)
-    assert len(result["messages"]) == 2
-    # Verify IDs are preserved for dedup
-    assert result["messages"][0].id == "tool_0"
-    assert result["messages"][1].id == "tool_1"
+    assert "memory_set" in str(result["messages"][0].content)

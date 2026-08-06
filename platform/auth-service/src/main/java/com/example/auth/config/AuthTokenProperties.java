@@ -4,7 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Auth token configuration — externalizes TTL values per Alibaba Constant Definition #1.
+ * Auth token configuration — externalizes TTL values per Alibaba 常量定义 #1.
  *
  * <p>Replaces hardcoded 3600 in TokenService, UserService, RefreshTokenService.</p>
  */

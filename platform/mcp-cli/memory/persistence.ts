@@ -1,6 +1,6 @@
 /**
  * Persistence layer: Store / Health / WAL / Config
- * Persistence layer: Store / Health / WAL / Config
+ * 持久化层: Store / Health / WAL / Config
  */
 
 import fs from "node:fs";
@@ -9,7 +9,7 @@ import os from "node:os";
 import type { MemoryStore, MemoryEntry, PendingWrite, HealthState } from "./types.js";
 import { DEFAULT_FORGET_CONFIG, type ForgetConfig } from "./forgetting-curve.js";
 
-// ─── Paths ──────────────────────────────────────────────────────────────────
+// ─── Paths / 文件路径 ────────────────────────────────────────────────────────
 
 export const DATA_DIR = process.env.MCP_DATA_DIR || path.join(os.homedir(), ".mcp-local");
 export const MEMORY_FILE = path.join(DATA_DIR, "memory-store.json");
@@ -44,7 +44,7 @@ export async function mutateStore(
   return next;
 }
 
-// ─── Memory Store ───────────────────────────────────────────────────────────
+// ─── Memory Store / 记忆存储 ─────────────────────────────────────────────────
 
 export function loadStore(): MemoryStore {
   ensureDataDir();
@@ -72,7 +72,7 @@ export function getStoreSizeKB(): number {
   }
 }
 
-// ─── Health State ───────────────────────────────────────────────────────────
+// ─── Health State / 健康状态 ─────────────────────────────────────────────────
 
 export function loadHealth(): HealthState {
   ensureDataDir();
@@ -91,7 +91,7 @@ export function saveHealth(health: HealthState): void {
   writeJsonAtomic(HEALTH_FILE, health);
 }
 
-// ─── Config (Forgetting Curve Parameters) ──────────────────────────────────
+// ─── Config (Forgetting Curve Parameters / 遗忘曲线参数) ─────────────────────
 
 export function loadConfig(): ForgetConfig {
   if (!fs.existsSync(CONFIG_FILE)) return { ...DEFAULT_FORGET_CONFIG };
@@ -108,10 +108,10 @@ export function saveConfig(config: ForgetConfig): void {
   writeJsonAtomic(CONFIG_FILE, config);
 }
 
-// ─── Write-Ahead Log (WAL) ──────────────────────────────────────────────────
+// ─── Write-Ahead Log (WAL / 预写日志) ────────────────────────────────────────
 // Write to WAL before persisting to memory-store.json.
 // On server restart, replay any incomplete writes.
-// Write the WAL before actually writing memory-store.json, so the server auto-recovers on restart
+// 在真正写入 memory-store.json 前先写 WAL，server 重启时自动恢复
 
 export function walAppend(entry: PendingWrite): void {
   ensureDataDir();
@@ -139,7 +139,7 @@ export function walRecover(): { recovered: number; entries: PendingWrite[] } {
   }
 }
 
-/** Replay pending WAL writes on startup — re-apply un-flushed writes to the store */
+/** Replay pending WAL writes on startup / 启动时执行 WAL 恢复 — 把未落盘的写入重放到 store */
 export function recoverFromWAL(): string[] {
   const { recovered, entries } = walRecover();
   if (recovered === 0) return [];

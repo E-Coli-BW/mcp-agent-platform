@@ -2,17 +2,17 @@
 
 ## Why Java for HTTP MCP?
 
-Pain points of the stdio version:
-- Every client connection spawns a new JVM (346ms cold start)
-- Each client holds its own process
-- Cannot share an in-memory cache
+stdio 版的痛点：
+- 每次客户端连接都要启动新 JVM（346ms 冷启动）
+- 每个客户端独占一个进程
+- 无法共享内存缓存
 
-Advantages of the HTTP version:
-- **Start once, serve forever** — sub-5ms latency after JVM warm-up
-- **Shared across clients** — VS Code, CLI, and Claude Desktop connect to the same port
-- **In-memory cache** — ConcurrentHashMap avoids reading from disk every time
-- **Full Spring Boot stack** — monitoring, security, rate limiting, and auditing out of the box
-- **Virtual Threads (Java 21)** — high concurrency with zero pressure
+HTTP 版的优势：
+- **启动一次，服务永久** — JVM 热身后延迟 <5ms
+- **多客户端共享** — VS Code、CLI、Claude Desktop 连同一个端口
+- **内存缓存** — ConcurrentHashMap 不用每次读磁盘
+- **Spring Boot 全家桶** — 监控、安全、限流、审计开箱即用
+- **Virtual Threads (Java 21)** — 高并发零压力
 
 ## Architecture
 

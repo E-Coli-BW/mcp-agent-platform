@@ -6,7 +6,7 @@ tasks:
   - platform/agent-server/agents/llm_factory.py
   level: L1
   has_test: false
-  need_description: 'We hit a problem: add streaming=False to MLX ChatOpenAI model. Please help me locate and fix it.'
+  need_description: '我们遇到一个问题: add streaming=False to MLX ChatOpenAI model。请帮我定位并修复。'
   description_quality: needs_review
   tags:
   - agent-server
@@ -18,13 +18,13 @@ tasks:
   - platform/agent-server/agents/graph_v2.py
   level: L1
   has_test: false
-  need_description: 'We hit a problem: skip hallucination guard after real tool results. Please help me locate and fix it.'
+  need_description: '我们遇到一个问题: skip hallucination guard after real tool results。请帮我定位并修复。'
   description_quality: ok
   tags:
   - agent-server
   - hallucination
   - flagship-case
-  notes: ★ This is the original commit of the hallucination loop. If arm A can reproduce the fix but arm C can't, it directly proves the value of the engineering enhancements.
+  notes: ★ 这条是 hallucination-loop talking card 的原始 commit。如果 arm A 能复现修复但 arm C 不能,直接证明你的工程价值。
 - sha: f94837f
   parent_sha: e715516
   commit_msg: 'fix(agent-server): improve system prompt for file navigation strategy'
@@ -32,7 +32,7 @@ tasks:
   - platform/agent-server/agents/prompts.py
   level: L1
   has_test: false
-  need_description: 'We hit a problem: improve system prompt for file navigation strategy. Please help me locate and fix it.'
+  need_description: '我们遇到一个问题: improve system prompt for file navigation strategy。请帮我定位并修复。'
   description_quality: ok
   tags:
   - agent-server
@@ -88,7 +88,7 @@ tasks:
   tags:
   - ci
   - deps
-  notes: ⚠️ borderline — env-coupled. Drop it if it's too hard to reproduce in CI.
+  notes: ⚠️ borderline — env-coupled. 如果 CI 太难复现就 drop。
 - sha: c2c4c94
   parent_sha: ''
   commit_msg: 'fix(ci): fix two CI failures'
@@ -100,7 +100,7 @@ tasks:
   description_quality: pending
   tags:
   - ci
-  notes: ⚠️ The commit message is too vague; the LLM back-translation may come out very generic — description_quality will most likely be needs_review.
+  notes: ⚠️ commit message 太模糊,LLM 反写可能写得很泛 — description_quality 大概率 needs_review。
 - sha: 0ac577a
   parent_sha: ''
   commit_msg: 'feat(agent-server): hallucination guard for tool-use verification + switch to graph v2'
@@ -117,7 +117,7 @@ tasks:
   - hallucination
   - flagship-feat
   - has-test
-  notes: ★ A complete hallucination guard feature. arm A should be able to devise a similar approach; arm C most likely can't — a high-signal case.
+  notes: ★ 完整的 hallucination guard feature。arm A 应该能想出类似方案,arm C 大概率写不出 — 高信号 case。
 - sha: 79b8d00
   parent_sha: ''
   commit_msg: 'fix(filesearch-server): resolve Jackson DatatypeFeature + add ToolBridgeController REST endpoints'
@@ -212,7 +212,7 @@ tasks:
   - security
   - multi-tenant
   - has-test
-  notes: ⚠️ Rule 5 says auth/billing/migration are STOP-and-ask zones. This is a task, not a real prod change, but review it before placing it in L2.
+  notes: ⚠️ Rule 5 提到 auth/billing/migration 是 STOP-and-ask 区。这是 task 不是真改 prod,但放进 L2 之前 review。
 - sha: 036947c
   parent_sha: ''
   commit_msg: 'fix(security): C7 — per-tenant RAG retriever cache prevents cross-tenant data leakage'
@@ -276,7 +276,7 @@ tasks:
   - agent-server
   - hardening
   - multi-concern
-  notes: ⚠️ multi-concern commit — Rule 3 says it should be split. But since it's already merged, it's a genuinely complex task; keep it at L3 to test whether the agent can handle it step by step.
+  notes: ⚠️ multi-concern commit — Rule 3 说应该拆。但既然已经合,这是个真实复杂 task,留 L3 测 agent 能否分步处理。
 - sha: 4ed8016
   parent_sha: ''
   commit_msg: 'feat(agent-server): C3 subagent verifier (off-by-default, fail-open)'
@@ -295,7 +295,7 @@ tasks:
   - verifier
   - flagship-feat
   - has-test
-  notes: ★ The verifier is one of the engineering enhancements. arm C turns the verifier off, so this case only tests whether arm A/B/D can implement a similar mechanism.
+  notes: ★ verifier 是你的工程之一。arm C 关掉了 verifier,所以这条 case 只测 arm A/B/D 能否实现类似机制。
 - sha: 0f0ad6f
   parent_sha: ''
   commit_msg: 'feat(agent-server): C2 direct tool routing fast-path (off by default)'
@@ -388,4 +388,4 @@ tasks:
   - n-of-k
   - meta
   - has-test
-  notes: ⚠️ meta-task — the agent modifies the eval harness itself. It may create a strange feedback loop, but keep it as an L3 complexity sample.
+  notes: ⚠️ meta-task — agent 自己改 eval harness。可能产生奇怪反馈环,但作为 L3 复杂度样本保留。

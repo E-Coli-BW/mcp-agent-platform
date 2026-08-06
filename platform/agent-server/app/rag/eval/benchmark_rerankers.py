@@ -19,7 +19,7 @@ import numpy as np
 
 from app.rag.index.retriever import InMemoryRetriever, ScoredChunk
 from app.rag.reranking.dispatcher import rerank as heuristic_rerank
-from app.rag.reranking.cross_encoder import cross_encoder_rerank
+from app.rag.reranking.cross_encoder import cross_encoder_available, cross_encoder_rerank
 from app.rag.eval.dataset import BENCHMARK
 
 
@@ -122,8 +122,7 @@ def run_benchmark():
 
     # Load index
     if not retriever.is_indexed:
-        platform_root = Path(__file__).resolve().parents[4]
-        platform_idx = get_index_dir_for_workspace(str(platform_root))
+        platform_idx = get_index_dir_for_workspace("~/mcp/platform")
         if not retriever.load_from_disk(str(platform_idx)):
             if not retriever.load_from_disk(str(BASE_INDEX_DIR)):
                 print("❌ No index found. Run: python -m app.rag.index.indexer /path/to/project")
@@ -145,36 +144,45 @@ def run_benchmark():
     heuristic = _evaluate_with_reranker(retriever, heuristic_rerank, "Heuristic")
 
     # 3. Cross-encoder reranker
-    print("Running: Cross-encoder reranker (first run downloads ~80MB model)...")
-    cross_enc = _evaluate_with_reranker(retriever, cross_encoder_rerank, "Cross-encoder")
+    if cross_encoder_available():
+        print("Running: Cross-encoder reranker (first run may download ~80MB model)...")
+        cross_enc = _evaluate_with_reranker(retriever, cross_encoder_rerank, "Cross-encoder")
+    else:
+        print("Skipping: Cross-encoder unavailable (install sentence-transformers and cache the model)")
+        cross_enc = {"label": "Cross-encoder", "status": "skipped", "reason": "sentence_transformers_unavailable"}
 
     # Print comparison table
     print()
     print(f"{'Reranker':<25} {'Recall@5':>10} {'MRR':>8} {'Avg Latency':>14}")
     print("=" * 60)
     for r in [baseline, heuristic, cross_enc]:
-        print(f"{r['label']:<25} {r['recall@5']:>9}% {r['mrr']:>8.3f} {r['avg_latency_ms']:>12.1f}ms")
+        if r.get("status") == "skipped":
+            print(f"{r['label']:<25} skipped ({r['reason']})")
+        else:
+            print(f"{r['label']:<25} {r['recall@5']:>9}% {r['mrr']:>8.3f} {r['avg_latency_ms']:>12.1f}ms")
     print()
 
     # Improvement summary
     base_recall = baseline["recall@5"]
     heur_recall = heuristic["recall@5"]
-    ce_recall = cross_enc["recall@5"]
     print("📈 Improvements over baseline (RRF only):")
     print(f"   Heuristic:     Recall {base_recall}% → {heur_recall}% ({heur_recall - base_recall:+.1f}pp)")
-    print(f"   Cross-encoder: Recall {base_recall}% → {ce_recall}% ({ce_recall - base_recall:+.1f}pp)")
+    if cross_enc.get("status") != "skipped":
+        ce_recall = cross_enc["recall@5"]
+        print(f"   Cross-encoder: Recall {base_recall}% → {ce_recall}% ({ce_recall - base_recall:+.1f}pp)")
     print()
 
     base_mrr = baseline["mrr"]
     heur_mrr = heuristic["mrr"]
-    ce_mrr = cross_enc["mrr"]
     print(f"   Heuristic:     MRR {base_mrr:.3f} → {heur_mrr:.3f} ({heur_mrr - base_mrr:+.3f})")
-    print(f"   Cross-encoder: MRR {base_mrr:.3f} → {ce_mrr:.3f} ({ce_mrr - base_mrr:+.3f})")
+    if cross_enc.get("status") != "skipped":
+        ce_mrr = cross_enc["mrr"]
+        print(f"   Cross-encoder: MRR {base_mrr:.3f} → {ce_mrr:.3f} ({ce_mrr - base_mrr:+.3f})")
     print()
 
     # Per-query diff (show where cross-encoder wins/loses vs heuristic)
     print("Per-query comparison (cross-encoder vs heuristic):")
-    for h, c in zip(heuristic["per_query"], cross_enc["per_query"]):
+    for h, c in zip(heuristic["per_query"], cross_enc.get("per_query", [])):
         if h["hit"] != c["hit"]:
             if c["hit"] and not h["hit"]:
                 print(f"  🟢 CE wins: '{c['query']}'  (CE found {c['expected']}, heuristic missed)")

@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcp.local/schemas/prompt-record.schema.json",
+  "title": "PromptRecord",
+  "type": "object",
+  "required": [
+    "prompt_id",
+    "version",
+    "status",
+    "template",
+    "content_hash",
+    "created_at",
+    "created_by"
+  ],
+  "properties": {
+    "prompt_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9._-]+$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "candidate",
+        "canary",
+        "active",
+        "deprecated",
+        "archived"
+      ]
+    },
+    "template": {
+      "type": "string",
+      "minLength": 1
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "input_schema_json": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "output_contract": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "owner": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "risk_tier": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        null
+      ]
+    },
+    "changelog": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rollback_to_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}

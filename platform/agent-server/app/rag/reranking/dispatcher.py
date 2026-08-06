@@ -1,8 +1,8 @@
 """Reranker dispatcher — chooses among LLM / cross-encoder / heuristic strategies.
 
-Quality vs latency trade-off:
+Quality vs latency trade-off (DIRECTIONAL — see benchmark note below):
 
-    Strategy       Quality      Latency      Notes
+    Strategy       Quality       Latency      Notes
     ────────────────────────────────────────────────────────────────────
     none           baseline    0ms          RRF passthrough — baseline
     heuristic      ≈ baseline  <5ms         Lexical bonuses; brittle (see below)
@@ -15,18 +15,19 @@ unavailable (model not installed, network down, etc.).
 
 History — why we keep the heuristic at all:
 - Original implementation had oversized bonuses (0.1-0.5) that crushed RRF
-  ranking and tanked recall. Scaling bonuses to ~20% of the median base score
-  fixed it. It's now a safe lexical-boost fallback, but it has a HARD ceiling
-  at recall ≈ baseline. Use cross_encoder or llm in production.
+  ranking and tanked recall. We fixed it by scaling bonuses to ~20% of the
+  median base score. It's now a safe lexical-boost fallback, but it has a
+  HARD ceiling at recall ≈ baseline. Use cross_encoder or llm in production.
 
-Benchmarking:
+Benchmark status (be honest — this matters):
 - `eval/benchmark_rerankers.py` covers none / heuristic / cross_encoder over a
-  20-query set (recall@5 + MRR + latency). The LLM strategy isn't wired into
-  that harness, so the quality ordering above is directional for that arm, not
-  a measured number. Absolute numbers depend on the index and query set.
-- Strategy is a settings switch for per-workload A/B: interactive tool-call RAG
-  defaults to cross_encoder (latency-sensitive); offline grading can afford the
-  LLM listwise pass.
+  20-query set (recall@5 + MRR + latency). The LLM strategy is NOT wired into
+  that harness yet, so its "quality" above is a DIRECTIONAL judgement, not a
+  measured number. Ordering (cross_encoder > heuristic ≈ baseline) is what the
+  harness supports; absolute percentages depend on the index and query set.
+- The trade-off we DO stand behind: strategy is a settings switch so we can A/B
+  per workload — interactive tool-call RAG defaults to cross_encoder (latency),
+  offline eval-harness grading can afford the LLM listwise pass (quality).
 """
 
 from __future__ import annotations

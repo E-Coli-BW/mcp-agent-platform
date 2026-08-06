@@ -1,5 +1,6 @@
 id: ops-agent
 name: "Ops Agent"
+description: "Investigate incidents and coordinate operational fixes"
 version: "1.0"
 model: qwen2.5:7b
 

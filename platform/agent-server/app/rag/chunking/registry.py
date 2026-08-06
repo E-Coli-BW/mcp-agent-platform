@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from app.rag.chunking.code import Chunk, chunk_file as tree_sitter_chunk
+from app.rag.chunking.metadata import enrich_chunks
 
 CHUNKER_MAP: dict[str, str] = {
     ".py": "tree_sitter",
@@ -28,27 +29,27 @@ def chunk_file(file_path: str | Path) -> list[Chunk]:
     chunker_type = CHUNKER_MAP.get(ext)
 
     if chunker_type == "tree_sitter" or chunker_type is None:
-        return tree_sitter_chunk(str(path))
+        return enrich_chunks(tree_sitter_chunk(str(path)))
     if chunker_type == "markdown":
         from app.rag.chunking.markdown import chunk_markdown
 
-        return chunk_markdown(path)
+        return enrich_chunks(chunk_markdown(path))
     if chunker_type in ("openapi_or_yaml", "openapi_or_json"):
         from app.rag.chunking.openapi import chunk_openapi_or_fallback
 
-        return chunk_openapi_or_fallback(path)
+        return enrich_chunks(chunk_openapi_or_fallback(path))
     if chunker_type == "pdf":
         from app.rag.chunking.pdf import chunk_pdf
 
-        return chunk_pdf(path)
+        return enrich_chunks(chunk_pdf(path))
     if chunker_type == "fixed_size":
         from app.rag.chunking.fixed_size import chunk_fixed_size
 
-        return chunk_fixed_size(path)
+        return enrich_chunks(chunk_fixed_size(path))
     if chunker_type == "html":
         from app.rag.chunking.html import chunk_html
 
-        return chunk_html(path)
+        return enrich_chunks(chunk_html(path))
     return tree_sitter_chunk(str(path))
 
 

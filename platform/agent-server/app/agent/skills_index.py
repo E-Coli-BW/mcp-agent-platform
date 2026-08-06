@@ -21,6 +21,13 @@ Cache:
 - The catalog is fetched from the memory server (namespace=skills) and cached
   in-process for ``settings.skills_index_ttl_seconds``. Multi-tenant safe: the
   cache is keyed by ``tenant_id`` so tenant A's skills are never visible to B.
+
+Interview talking point:
+- "Stuffing 50 skill bodies into the system prompt is the classic 'context as
+   global variable' anti-pattern. We treat skills as a lazy-loaded library:
+   prompt has a 1-line index entry, the LLM calls skill_get(key) to pull the
+   body only when needed. Same idea as auto-loaded modules in a programming
+   language — pay the cost only on first use."
 """
 
 from __future__ import annotations

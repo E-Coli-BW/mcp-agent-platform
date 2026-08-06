@@ -1,0 +1,92 @@
+#!/bin/bash
+# Pre-commit hook — runs build + tests before every commit.
+# Install: make install-hooks
+# Skip:    git commit --no-verify
+#
+# CRITICAL: `set -e` does NOT catch failures in the middle of a pipeline.
+# `make test-java 2>&1 | tail -5` would mask test failures because `tail`
+# always returns 0 — the script saw `$?=0` and printed "✅ passed" even
+# when tests failed. We hit this exact bug on commit 47bca4e (Python
+# test_temperature_plumbing.py had 3 failing tests that were silently
+# allowed through). `set -o pipefail` makes the pipeline's exit code be
+# the rightmost non-zero status, so the failure surfaces.
+#
+# This is the shell-pipeline version of the general "masked failure" pattern.
+
+set -euo pipefail
+
+echo "🔒 Pre-commit: running verification pipeline..."
+echo ""
+
+# Determine which files changed
+JAVA_CHANGED=$(git diff --cached --name-only | grep -E '\.java$|pom\.xml' || true)
+PYTHON_CHANGED=$(git diff --cached --name-only | grep -E '\.py$|requirements|pyproject\.toml' || true)
+TYPESCRIPT_CHANGED=$(git diff --cached --name-only | grep -E \
+    '^platform/mcp-cli/.*\.(ts|mts|cts|js|mjs|json)$|^src/.*\.ts$|^(package(-lock)?\.json|tsconfig\.json)$' \
+    || true)
+FRONTEND_CHANGED=$(git diff --cached --name-only | grep -E \
+    '^platform/frontend/.*\.(ts|tsx|js|jsx|json|css|html)$' \
+    || true)
+CONTEXT_CONTRACT_CHANGED=$(git diff --cached --name-only | grep -E \
+    'platform/agent-server/app/agent/(compressor|graph_v2)\.py|platform/agent-server/tests/test_(compressor|graph_v2|context_contract)\.py|platform/agent-server/README\.md|platform/docs/RUNTIME-REFACTOR-ROADMAP\.md|platform/eval-harness/scenarios/context_compression/README\.md' \
+    || true)
+AGENT_RUNTIME_CHANGED=$(git diff --cached --name-only | grep -E \
+    'platform/agent-server/app/(api/chat|agent/(graph|graph_v2|subagent)|runtime/(checkpoint|continuation|tool_authorization)|tools/mcp_client)\.py|platform/agent-server/tests/test_(runtime_tool_authorization|runtime_approval_api|runtime_checkpoint|runtime_checkpoint_transitions|runtime_continuation|runtime_continuation_async|auth_contract|temperature_plumbing)\.py|platform/docs/RUNTIME-REFACTOR-ROADMAP\.md' \
+    || true)
+
+# If only docs/configs changed, skip tests
+if [ -z "$JAVA_CHANGED" ] && [ -z "$PYTHON_CHANGED" ] && [ -z "$TYPESCRIPT_CHANGED" ] && [ -z "$FRONTEND_CHANGED" ] && [ -z "$CONTEXT_CONTRACT_CHANGED" ] && [ -z "$AGENT_RUNTIME_CHANGED" ]; then
+    echo "📝 Only non-code files changed — skipping tests"
+    exit 0
+fi
+
+# Always rebuild mcp-common first (lesson from the security bug investigation!)
+if [ -n "$JAVA_CHANGED" ]; then
+    echo "📦 Rebuilding mcp-common (ensures no stale JARs)..."
+    make build-common 2>&1 | tail -3
+
+    echo "🧪 Running Java tests..."
+    # NOTE: integration test classes (require Docker) are excluded by the
+    # surefire-plugin config in each module's pom.xml. If you need to run
+    # them locally, use `make test-integration` instead.
+    make test-java 2>&1 | tail -5
+fi
+
+if [ -n "$PYTHON_CHANGED" ] || [ -n "$CONTEXT_CONTRACT_CHANGED" ]; then
+    echo "🔒 Running context state contract gate..."
+    make test-python-contract 2>&1 | tail -5
+fi
+
+if [ -n "$AGENT_RUNTIME_CHANGED" ]; then
+    echo "🔒 Running Agent runtime contract gate..."
+    make test-agent-runtime-contract 2>&1 | tail -5
+fi
+
+if [ -n "$PYTHON_CHANGED" ]; then
+    echo "🧪 Running Python tests..."
+    make test-python 2>&1 | tail -5
+fi
+
+if [ -n "$TYPESCRIPT_CHANGED" ]; then
+    echo "🧪 Running TypeScript MCP tests..."
+    make test-typescript 2>&1 | tail -10
+fi
+
+if [ -n "$FRONTEND_CHANGED" ]; then
+    echo "🧪 Building frontend..."
+    make test-frontend 2>&1 | tail -10
+fi
+
+# Integration tests (if Docker is running)
+INFRA_CHANGED=$(git diff --cached --name-only | grep -E 'docker-compose|kafka/|spi/|scripts/demos' || true)
+if [ -n "$INFRA_CHANGED" ]; then
+    if docker compose -f platform/docker-compose.yml ps --quiet 2>/dev/null | head -1 > /dev/null; then
+        echo "🐳 Running infrastructure integration tests..."
+        bash platform/test-integration.sh infra 2>&1 | tail -5
+    else
+        echo "⏭  Docker not running — skipping infra integration tests"
+    fi
+fi
+
+echo ""
+echo "✅ Pre-commit verification passed"

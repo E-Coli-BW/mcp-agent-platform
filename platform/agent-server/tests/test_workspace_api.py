@@ -38,6 +38,29 @@ class TestWorkspaceAPI:
         assert resp.status_code == 200
         assert str(new_ws) in resp.json()["path"]
 
+    async def test_open_workspace_does_not_create_missing_directory(self, client, tmp_path):
+        missing = tmp_path / "mistyped-project"
+
+        resp = await client.post("/api/workspace/open", json={"path": str(missing)})
+
+        assert resp.status_code == 400
+        assert not missing.exists()
+
+    async def test_browse_workspace_returns_canonical_navigation_paths(self, client, tmp_path):
+        root = tmp_path / "browse-root"
+        child = root / "project-a"
+        child.mkdir(parents=True)
+
+        resp = await client.get("/api/workspace/browse", params={"path": str(root)})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["path"] == str(root.resolve())
+        assert body["parent"] == str(tmp_path.resolve())
+        assert body["dirs"] == [
+            {"name": "project-a", "path": str(child.resolve())}
+        ]
+
     async def test_list_files(self, client):
         resp = await client.get("/api/workspace/files")
         assert resp.status_code == 200

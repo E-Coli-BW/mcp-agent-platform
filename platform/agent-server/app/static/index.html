@@ -83,10 +83,23 @@
         .tool-chip.executing { opacity: 0.7; }
         .tool-chip.executing .tool-spinner { display: inline-block; }
         .tool-chip.completed .tool-status { display: inline-block; }
+        .tool-chip .tool-summary { display: flex; align-items: center; gap: 6px; min-width: 0; }
+        .tool-chip .tool-name { white-space: nowrap; }
+        .tool-chip details { margin-left: auto; color: var(--text-dim); font-size: 10px; }
+        .tool-chip details summary { cursor: pointer; user-select: none; }
+        .tool-chip .tool-detail { min-width: 240px; max-width: 560px; max-height: 180px; overflow: auto; margin-top: 6px; padding: 6px; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text); white-space: pre-wrap; font: 11px/1.4 'Cascadia Code', 'Fira Code', monospace; }
         .tool-spinner { display: none; width: 10px; height: 10px; border: 1.5px solid var(--green); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
         .tool-chip.write-tool .tool-spinner { border-color: var(--orange); border-top-color: transparent; }
         .tool-status { display: none; font-size: 10px; }
         .tool-calls-group { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
+        .approval-card { border: 1px solid #8a6a25; background: #2b2415; color: #f0d58a; padding: 10px; margin: 8px 0; font-size: 12px; }
+        .approval-card .approval-title { font-weight: 600; margin-bottom: 6px; }
+        .approval-card .approval-reason { color: #c9b985; margin: 4px 0 8px; }
+        .approval-card button { border: 1px solid #8a6a25; background: transparent; color: #f0d58a; padding: 4px 9px; margin-right: 6px; cursor: pointer; }
+        .approval-card button:hover { background: #473a1d; }
+        .approval-card button.reject { color: #ff9b91; border-color: #8d4038; }
+        .approval-card.approved { border-color: #3d7e4d; background: #172a1b; color: #9cdda9; }
+        .approval-card.rejected { border-color: #8d4038; background: #2a1717; color: #ffaaa1; }
         @keyframes spin { to { transform: rotate(360deg); } }
         #input-area { padding: 8px 12px; display: flex; gap: 8px; border-top: 1px solid var(--border); }
         #input { flex: 1; padding: 6px 10px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 13px; outline: none; resize: none; font-family: inherit; min-height: 32px; max-height: 80px; }
@@ -575,14 +588,14 @@
         chip.className = 'tool-chip executing' + (isWrite ? ' write-tool' : '');
         chip.dataset.tool = name;
         const detail = input?.path || input?.query || input?.message || '';
-        chip.innerHTML = `<span class="tool-spinner"></span><span class="tool-status">✓</span> ${isWrite ? '📝' : '🔍'} ${name}${detail ? ': ' + detail : ''}`;
+        chip.innerHTML = `<div class="tool-summary"><span class="tool-spinner"></span><span class="tool-status">✓</span> ${isWrite ? '📝' : '🔍'} <span class="tool-name">${escapeHtml(name)}${detail ? ': ' + escapeHtml(detail) : ''}</span></div><details><summary>details</summary><div class="tool-detail">input: ${escapeHtml(JSON.stringify(input || {}, null, 2))}</div></details>`;
         if (input?.path) chip.onclick = () => openFile(input.path);
         getOrCreateToolGroup().appendChild(chip);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
         return chip;
     }
 
-    function completeLastToolChip() {
+    function completeLastToolChip(output) {
         const group = toolGroup;
         if (!group) return;
         const chips = group.querySelectorAll('.tool-chip.executing');
@@ -590,7 +603,42 @@
         if (last) {
             last.classList.remove('executing');
             last.classList.add('completed');
+            const detail = last.querySelector('.tool-detail');
+            if (detail && output !== undefined) {
+                detail.textContent += `\n\noutput:\n${output || '(empty)'}`;
+            }
         }
+    }
+
+    function addApprovalCard(approval) {
+        const card = document.createElement('div');
+        card.className = 'approval-card';
+        card.dataset.approvalId = approval.approval_id;
+        card.innerHTML = `<div class="approval-title">Approval required: ${escapeHtml(approval.tool_name)}</div><div class="approval-reason">${escapeHtml(approval.reason)}</div><div><button data-decision="approved">Approve</button><button class="reject" data-decision="rejected">Reject</button></div>`;
+        card.querySelectorAll('button').forEach(button => button.addEventListener('click', async () => {
+            card.querySelectorAll('button').forEach(b => b.disabled = true);
+            const response = await authFetch(`${API}/v1/approvals/${encodeURIComponent(approval.approval_id)}/decision`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({status: button.dataset.decision}),
+            });
+            if (!response.ok) {
+                card.querySelectorAll('button').forEach(b => b.disabled = false);
+                setStatus('Approval update failed');
+                return;
+            }
+            const decided = await response.json();
+            card.classList.add(decided.status);
+            card.querySelector('div:last-child').textContent = decided.status === 'approved' ? 'Approved; waiting for run resume.' : 'Rejected.';
+            setStatus(decided.status === 'approved' ? 'Approved' : 'Rejected');
+        }));
+        messagesDiv.appendChild(card);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
     }
 
     async function sendMessage() {
@@ -615,7 +663,11 @@
             const reader = resp.body.getReader();
             const decoder = new TextDecoder();
             let buf = '';
-            let currentEvent = '';
+        let currentEvent = '';
+        // The server sends named tool events plus a legacy HTML-comment
+        // compatibility payload. Render only the named protocol when it is
+        // present, otherwise old servers remain usable.
+        let modernToolEventsSeen = false;
 
             while (true) {
                 const {done, value} = await reader.read();
@@ -641,17 +693,23 @@
                     if (currentEvent === 'tool_start' || currentEvent === 'tool_end') {
                         try {
                             const ev = JSON.parse(d);
+                            modernToolEventsSeen = true;
                             if (currentEvent === 'tool_start') {
                                 addToolChip(ev.tool, ev);
                                 setStatus('🔧 ' + ev.tool);
                             } else {
-                                completeLastToolChip();
+                                completeLastToolChip(ev.output);
                                 setStatus('Thinking...');
                                 if (['file_write','file_edit'].includes(ev.tool)) {
                                     setTimeout(() => { refreshTree(); reloadFile(ev.input?.path); }, 300);
                                 }
                             }
                         } catch(e) {}
+                        currentEvent = '';
+                        continue;
+                    }
+                    if (currentEvent === 'approval_required') {
+                        try { addApprovalCard(JSON.parse(d)); } catch(e) {}
                         currentEvent = '';
                         continue;
                     }
@@ -664,11 +722,16 @@
                         // Structured tool events
                         const m = c.match(/<!-- TOOL:({.*?}) -->/);
                         if (m) {
+                            if (modernToolEventsSeen) {
+                                // Avoid rendering the same tool a second time
+                                // from the legacy compatibility payload.
+                                continue;
+                            }
                             try {
                                 const ev = JSON.parse(m[1]);
                                 if (ev.action === 'start') { addToolChip(ev.tool, ev.input); setStatus('🔧 ' + ev.tool); }
                                 else if (ev.action === 'end') {
-                                    completeLastToolChip();
+                                    completeLastToolChip(ev.output);
                                     setStatus('Thinking...');
                                     if (['file_write','file_edit'].includes(ev.tool)) {
                                         setTimeout(() => { refreshTree(); reloadFile(ev.input?.path); }, 300);
@@ -681,7 +744,8 @@
                             // Once text arrives, end the tool group so next tools get a new group
                             if (c.trim()) toolGroup = null;
                             // Strip tool-narration lines the model produces
-                            const cleaned = c.replace(/^🔧 Using \w+\.\.\.\s*/gm, '')
+                            const cleaned = c.replace(/<tool_call>[\s\S]*?<\/tool_call>|<\/?tool_call>/gi, '')
+                                             .replace(/^🔧 Using \w+\.\.\.\s*/gm, '')
                                              .replace(/^(?:Let me |I'll |I will |Let's |I have |Next,? I |Based on |To understand |I searched |I need to |Given that |Since ).*\n?/gim, '')
                                              .replace(/^The (?:file|directory|search|next step|key files|position).*(?:I will|let me|next).*\n?/gim, '');
                             raw += cleaned;

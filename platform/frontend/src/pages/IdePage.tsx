@@ -15,7 +15,7 @@ export function IdePage() {
       <FileTree onFileSelect={openFile} />
 
       {/* Main area: Editor + Chat */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Code Editor with tabs */}
         <CodeEditor
           tabs={tabs}

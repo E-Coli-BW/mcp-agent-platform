@@ -74,7 +74,7 @@ def evaluate_retriever(retriever: InMemoryRetriever, strategy: str = "hybrid",
 
             # Check if any expected file appears in results
             result_files = [Path(c.file_path).name for c in chunks]
-            
+
             hit = False
             best_rank = None
             for expected in expected_files:
@@ -108,8 +108,7 @@ def run_evaluation():
     # Try loading index
     if not retriever.is_indexed:
         # Try workspace-specific index for platform
-        platform_root = Path(__file__).resolve().parents[4]
-        platform_idx = get_index_dir_for_workspace(str(platform_root))
+        platform_idx = get_index_dir_for_workspace("~/mcp/platform")
         if not retriever.load_from_disk(str(platform_idx)):
             if not retriever.load_from_disk(str(BASE_INDEX_DIR)):
                 print("❌ No index found. Run: python -m app.rag.index.indexer /path/to/project")
