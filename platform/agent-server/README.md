@@ -26,8 +26,9 @@ python -m venv .venv
 # 3. Activate it
 source .venv/bin/activate
 
-# 4. Install dependencies
-pip install -e ".[dev]"
+# 4. Install the local plugin SDK and agent dependencies
+pip install -e ../agent-sdk
+pip install -e ".[dev,rag]"
 
 # 5. Make sure Ollama is running (in a separate terminal)
 ollama serve
