@@ -23,7 +23,7 @@ from app.agent.fleet_bus import (
     request_cancel as fleet_request_cancel,
 )
 from app.store.conversation import get_conversation_store, Message
-from app.agent.intent import is_meta_question, get_meta_answer, detect_topic_switch
+from app.agent.intent import is_meta_question, get_meta_answer
 from app.usage import get_usage_tracker, RequestUsage, estimate_tokens
 from app.auth.middleware import require_auth, AuthContext, tenant_context
 from app.config import settings
@@ -127,6 +127,75 @@ def _make_status_event(state: str, event_id: str | None = None, **extra) -> dict
     if event_id:
         event["id"] = event_id
     return event
+
+
+class _ToolEventTracker:
+    """Expose one lifecycle for each outer tool run, hiding nested wrappers."""
+
+    def __init__(self) -> None:
+        self._next_seq = 0
+        self._visible_runs: dict[str, int] = {}
+
+    @property
+    def count(self) -> int:
+        return self._next_seq
+
+    def start(self, event: dict) -> int | None:
+        run_id = str(event.get("run_id", ""))
+        parent_ids = {str(parent_id) for parent_id in event.get("parent_ids", [])}
+        if any(parent_id in self._visible_runs for parent_id in parent_ids):
+            return None
+
+        self._next_seq += 1
+        if run_id:
+            self._visible_runs[run_id] = self._next_seq
+        return self._next_seq
+
+    def end(self, event: dict) -> int | None:
+        run_id = str(event.get("run_id", ""))
+        if not run_id:
+            return self._next_seq or None
+        return self._visible_runs.pop(run_id, None)
+
+
+class _FinalResponseBuffer:
+    """Retain only the latest actor-model response candidate."""
+
+    def __init__(self) -> None:
+        self._parts: list[str] = []
+
+    def start_call(self) -> None:
+        self._parts = []
+
+    def append(self, content: str) -> None:
+        self._parts.append(content)
+
+    @property
+    def text(self) -> str:
+        return "".join(self._parts)
+
+
+def _is_actor_model_event(event: dict) -> bool:
+    node = event.get("metadata", {}).get("langgraph_node")
+    return node in (None, "call_llm")
+
+
+def _verified_artifact_answer_from_chain_event(event: dict) -> str | None:
+    if event.get("event") != "on_chain_end":
+        return None
+    output = event.get("data", {}).get("output")
+    if isinstance(output, dict):
+        messages = output.get("messages", [])
+    else:
+        messages = getattr(output, "messages", [])
+    if not isinstance(messages, (list, tuple)):
+        messages = [messages]
+    for message in reversed(messages):
+        additional_kwargs = getattr(message, "additional_kwargs", {})
+        if isinstance(additional_kwargs.get("verified_artifact"), dict):
+            content = getattr(message, "content", "")
+            return content if isinstance(content, str) else str(content)
+    return None
 
 
 def _make_child_event(bus_event: dict) -> dict:
@@ -233,6 +302,8 @@ async def _stream_agent_response(
         # ────────────────────────────────────────────────────────────────
         usage = RequestUsage(model=model)
         tool_count = 0
+        tool_events = _ToolEventTracker()
+        response_buffer = _FinalResponseBuffer()
         start_time = time.time()
         model_call_seq = 0
         active_model_call: dict | None = None
@@ -408,6 +479,10 @@ async def _stream_agent_response(
 
                 # source == "agent"
                 kind = event.get("event", "")
+                artifact_answer = _verified_artifact_answer_from_chain_event(event)
+                if artifact_answer:
+                    response_buffer.start_call()
+                    response_buffer.append(artifact_answer)
 
                 # Accumulate REAL prompt tokens — fires once per LLM call inside
                 # the ReAct loop. The `input` here is the full message list the
@@ -415,6 +490,9 @@ async def _stream_agent_response(
                 # current user turn). estimate_tokens() is rough (4 chars≈1tok)
                 # but at least it's measuring the right thing.
                 if kind == "on_chat_model_start":
+                    is_actor_model = _is_actor_model_event(event)
+                    if is_actor_model:
+                        response_buffer.start_call()
                     model_input = event.get("data", {}).get("input", {})
                     messages_for_llm = model_input.get("messages", []) if isinstance(model_input, dict) else []
                     # messages_for_llm is a list of message-lists per langgraph's API;
@@ -442,6 +520,7 @@ async def _stream_agent_response(
                         "started_at": time.monotonic(),
                         "prompt_tokens": call_prompt_tokens,
                         "completion_tokens": 0,
+                        "is_actor": is_actor_model,
                     }
                     await run_recorder.record_event(
                         req_ctx.run_id,
@@ -460,13 +539,12 @@ async def _stream_agent_response(
                 if kind == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content") and chunk.content:
-                        full_response += chunk.content
+                        if _is_actor_model_event(event):
+                            response_buffer.append(chunk.content)
                         inc = estimate_tokens(chunk.content)
                         usage.completion_tokens += inc
                         if active_model_call is not None:
                             active_model_call["completion_tokens"] += inc
-                        yield _make_chunk(chunk.content, model)
-
                 elif kind == "on_chat_model_end":
                     if active_model_call is not None:
                         duration_ms = int((time.monotonic() - active_model_call["started_at"]) * 1000)
@@ -510,15 +588,18 @@ async def _stream_agent_response(
 
                 # Log tool calls — emit structured event for UI
                 elif kind == "on_tool_start":
+                    tool_seq = tool_events.start(event)
+                    if tool_seq is None:
+                        continue
                     tool_name = event.get("name", "unknown")
                     tool_input = event.get("data", {}).get("input", {})
-                    tool_count += 1
+                    tool_count = tool_events.count
                     tool_envelope = make_tool_invocation_envelope(
                         run_id=req_ctx.run_id,
                         request_id=req_ctx.request_id,
                         session_id=session_id,
                         tenant_id=tenant_id,
-                        step_seq=tool_count,
+                        step_seq=tool_seq,
                         tool_name=tool_name,
                         arguments=tool_input if isinstance(tool_input, dict) else {"input": tool_input},
                     )
@@ -546,7 +627,7 @@ async def _stream_agent_response(
                         req_ctx.run_id,
                         "tool_started",
                         {
-                            "seq": tool_count,
+                            "seq": tool_seq,
                             "tool": tool_name,
                             "input": tool_input,
                             "invocation": tool_envelope.to_event_payload(),
@@ -557,20 +638,14 @@ async def _stream_agent_response(
                         "start",
                         tool_name,
                         {"input": tool_input},
-                        seq=tool_count,
+                        seq=tool_seq,
                         event_id=tool_started_event.event_id,
                     )
 
-                    # OLD: HTML comment for backward compat (remove after frontend migration)
-                    tool_event = json.dumps(
-                        {"tool": tool_name, "action": "start", "input": tool_input}
-                    )
-                    yield _make_chunk(
-                        f'\n<!-- TOOL:{tool_event} -->\n🔧 Using {tool_name}...\n',
-                        model,
-                    )
-
                 elif kind == "on_tool_end":
+                    tool_seq = tool_events.end(event)
+                    if tool_seq is None:
+                        continue
                     tool_name = event.get("name", "unknown")
                     tool_output = str(event.get("data", {}).get("output", ""))[:500]
                     tool_input_end = event.get("data", {}).get("input", {})
@@ -614,7 +689,7 @@ async def _stream_agent_response(
                         req_ctx.run_id,
                         "tool_completed",
                         {
-                            "seq": tool_count,
+                            "seq": tool_seq,
                             "tool": tool_name,
                             "input": tool_input_end,
                             "output_preview": tool_output[:200],
@@ -624,18 +699,9 @@ async def _stream_agent_response(
                         "end",
                         tool_name,
                         {"input": tool_input_end, "output": tool_output[:200]},
-                        seq=tool_count,
+                        seq=tool_seq,
                         event_id=tool_completed_event.event_id,
                     )
-
-                    # OLD: HTML comment for backward compat
-                    tool_event = json.dumps({
-                        "tool": tool_name,
-                        "action": "end",
-                        "input": tool_input_end,
-                        "output": tool_output,
-                    })
-                    yield _make_chunk(f'<!-- TOOL:{tool_event} -->\n', model)
 
                     # Publish to Kafka
                     from app.events.kafka_producer import get_event_producer
@@ -694,6 +760,14 @@ async def _stream_agent_response(
                     "status": "ok",
                 },
             )
+
+        # Only the final actor candidate is user-visible. Earlier model calls
+        # may have been rejected by tool/evidence guards after their tokens
+        # were generated, so streaming them eagerly would leak invalid drafts.
+        if not client_disconnected and not cancel_requested:
+            full_response = response_buffer.text
+            if full_response:
+                yield _make_chunk(full_response, model)
 
         # Send finish + save response
         if full_response:
@@ -842,8 +916,7 @@ async def chat_completions(
 
     Pre-processing:
     1. Meta-questions → answer directly (no agent/tools)
-    2. Topic switch → reset agent thread for fresh context
-    3. Normal → forward to LangGraph agent
+    2. Normal requests → forward to the client-owned LangGraph thread
     """
     if not request.messages:
         raise HTTPException(status_code=400, detail="messages is required")
@@ -919,13 +992,6 @@ async def chat_completions(
                     "choices": [{"index": 0, "message": {"role": "assistant", "content": answer}, "finish_reason": "stop"}],
                     "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
                 }
-
-    # 2. Topic switch — use new thread_id so agent starts fresh
-    history = await store.get_messages_for_llm(session_id)
-    if detect_topic_switch(user_input, history):
-        # Append a suffix to thread_id so LangGraph uses fresh state
-        session_id = f"{session_id}-{uuid.uuid4().hex[:6]}"
-        set_request_context(request_id=request_id, run_id=run_id, session_id=session_id)
 
     if request.stream:
         return EventSourceResponse(

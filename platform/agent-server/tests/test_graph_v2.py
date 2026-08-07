@@ -17,13 +17,18 @@ from app.agent.graph_v2 import (
     ContextBudgetExceededError,
     _build_llm_messages,
     _build_llm_view,
+    _deduplicate_tool_calls,
     build_agent_graph,
     inject_context_node,
     make_error_tracking_node,
     make_hallucination_fix_node,
     make_route_node,
+    make_synthesize_artifact_node,
+    reset_turn_state_node,
+    route_after_artifact_synthesis,
     update_investigation_node,
 )
+from app.artifacts import ArtifactRegistry, VerifiedArtifact
 
 
 # ── AgentState ────────────────────────────────────────────────
@@ -49,10 +54,64 @@ def test_build_agent_graph_uses_model_view_only_compression():
     )
 
     node_names = set(graph.get_graph().nodes)
+    assert "reset_turn_state" in node_names
+    assert "synthesize_artifact" in node_names
     assert "update_investigation_initial" in node_names
     assert "update_investigation_tools" in node_names
     assert "compress_history" not in node_names
     assert "context_compressor" not in node_names
+
+
+def test_deduplicate_tool_calls_drops_exact_duplicates():
+    response = AIMessage(
+        content="",
+        tool_calls=[
+            {"id": "first", "name": "file_list", "args": {"path": "infrastructure"}},
+            {"id": "duplicate", "name": "file_list", "args": {"path": "infrastructure"}},
+            {"id": "other", "name": "file_read", "args": {"path": "infrastructure/template.yml"}},
+        ],
+    )
+
+    deduplicated = _deduplicate_tool_calls(response)
+
+    assert [call["id"] for call in deduplicated.tool_calls] == ["first", "other"]
+    assert len(response.tool_calls) == 3
+
+
+def test_deduplicate_tool_calls_preserves_different_arguments():
+    response = AIMessage(
+        content="",
+        tool_calls=[
+            {"id": "one", "name": "file_read", "args": {"path": "one.yml"}},
+            {"id": "two", "name": "file_read", "args": {"path": "two.yml"}},
+        ],
+    )
+
+    assert _deduplicate_tool_calls(response) is response
+
+
+def test_reset_turn_state_preserves_checkpointed_context():
+    state = AgentState(
+        messages=[HumanMessage(content="continue the investigation")],
+        workspace_context="workspace",
+        investigation=InvestigationState(confirmed_facts=["template.yml exists"]),
+        loop_counter=12,
+        consecutive_errors=2,
+        critique_attempts=1,
+        compression_summary="old summary",
+    )
+
+    result = reset_turn_state_node(state)
+
+    assert result == {
+        "loop_counter": 0,
+        "consecutive_errors": 0,
+        "critique_attempts": 0,
+        "compression_summary": "",
+    }
+    assert state.messages[0].content == "continue the investigation"
+    assert state.workspace_context == "workspace"
+    assert state.investigation.confirmed_facts == ["template.yml exists"]
 
 
 # ── inject_context_node ──────────────────────────────────────
@@ -185,6 +244,75 @@ def test_update_investigation_node_extracts_confirmed_fact():
     assert state.investigation == InvestigationState()
 
 
+def test_plugin_artifact_becomes_deterministic_checkpointed_answer():
+    class DemoPlugin:
+        plugin_id = "demo"
+
+        def extract_file(self, **kwargs):
+            return None
+
+        def accepts_request(self, prompt, artifact):
+            return "explain" in prompt
+
+        def required_tools(self, prompt, tool_outputs):
+            return ()
+
+        def validate(self, artifact):
+            return artifact.artifact_type == "summary"
+
+        def render_answer(self, artifact):
+            return f"Verified: {artifact.content}"
+
+    artifact = VerifiedArtifact(
+        plugin_id="demo",
+        artifact_type="summary",
+        source_path="evidence.txt",
+        content="deterministic evidence",
+    )
+    state = AgentState(
+        messages=[
+            HumanMessage(content="explain this evidence"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "read-1",
+                        "name": "file_read",
+                        "args": {"path": "evidence.txt"},
+                    }
+                ],
+            ),
+            ToolMessage(
+                content=artifact.to_tool_block(),
+                tool_call_id="read-1",
+                name="file_read",
+            ),
+        ]
+    )
+
+    node = make_synthesize_artifact_node(ArtifactRegistry([DemoPlugin()]))
+    result = node(state)
+    answer = result["messages"][0]
+
+    assert answer.content == "Verified: deterministic evidence"
+    assert answer.additional_kwargs["verified_artifact"] == {
+        "plugin_id": "demo",
+        "artifact_type": "summary",
+        "source_path": "evidence.txt",
+    }
+
+    routed_state = AgentState(messages=[*state.messages, answer])
+    assert route_after_artifact_synthesis(routed_state) == "__end__"
+
+
+def test_artifact_synthesis_falls_back_when_no_plugin_accepts():
+    node = make_synthesize_artifact_node(ArtifactRegistry())
+    state = AgentState(messages=[HumanMessage(content="explain this project")])
+
+    assert node(state) == {}
+    assert route_after_artifact_synthesis(state) == "call_llm"
+
+
 def _build_investigation_checkpoint_graph(checkpointer):
     graph = StateGraph(AgentState)
     graph.add_node("update_investigation", update_investigation_node)
@@ -243,6 +371,71 @@ def test_route_to_end_when_no_tool_calls():
         messages=[AIMessage(content="Here is your answer")],
         loop_counter=1,
     )
+    assert route(state) == "__end__"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "I will now explore the environment directory.",
+        "Let me read the remaining config files.",
+        "Next, let's examine the production configuration.",
+        "The next step is to search for broader terms.",
+    ],
+)
+def test_route_retries_unfinished_action_after_tool_result(content):
+    route = make_route_node(max_steps=20)
+    state = AgentState(
+        messages=[
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "1", "name": "file_search", "args": {"query": "x"}}],
+            ),
+            ToolMessage(content="No matches found", tool_call_id="1", name="file_search"),
+            AIMessage(content=content),
+        ],
+        loop_counter=2,
+    )
+
+    assert route(state) == "hallucination_fix"
+
+
+def test_route_requires_primary_source_read_after_search_result():
+    route = make_route_node(max_steps=20, available_tools={"file_search", "file_read"})
+    state = AgentState(
+        messages=[
+            HumanMessage(content="read this project and explain the workflow"),
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "1", "name": "file_search", "args": {"query": "workflow"}}],
+            ),
+            ToolMessage(
+                content="src/template.yml:10: StartAt: Validate",
+                tool_call_id="1",
+                name="file_search",
+            ),
+            AIMessage(content="The search did not show explicit transitions."),
+        ],
+        loop_counter=2,
+    )
+
+    assert route(state) == "hallucination_fix"
+
+
+def test_route_allows_completed_tool_summary():
+    route = make_route_node(max_steps=20)
+    state = AgentState(
+        messages=[
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "1", "name": "file_search", "args": {"query": "x"}}],
+            ),
+            ToolMessage(content="match", tool_call_id="1", name="file_search"),
+            AIMessage(content="I searched the project and found the workflow in template.yml."),
+        ],
+        loop_counter=2,
+    )
+
     assert route(state) == "__end__"
 
 

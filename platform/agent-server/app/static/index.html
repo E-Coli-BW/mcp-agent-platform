@@ -663,11 +663,9 @@
             const reader = resp.body.getReader();
             const decoder = new TextDecoder();
             let buf = '';
-        let currentEvent = '';
-        // The server sends named tool events plus a legacy HTML-comment
-        // compatibility payload. Render only the named protocol when it is
-        // present, otherwise old servers remain usable.
-        let modernToolEventsSeen = false;
+            let currentEvent = '';
+            let currentEventId = '';
+            const seenToolEventIds = new Set();
 
             while (true) {
                 const {done, value} = await reader.read();
@@ -685,15 +683,26 @@
                         continue;
                     }
 
+                    if (t.startsWith('id:')) {
+                        currentEventId = t.slice(3).trim();
+                        continue;
+                    }
+
                     if (!t.startsWith('data:')) { currentEvent = ''; continue; }
                     const d = t.slice(5).trim();
                     if (d === '[DONE]') continue;
 
                     // Named tool events (modern path)
                     if (currentEvent === 'tool_start' || currentEvent === 'tool_end') {
+                        const eventId = currentEventId;
+                        currentEventId = '';
+                        if (eventId && seenToolEventIds.has(eventId)) {
+                            currentEvent = '';
+                            continue;
+                        }
+                        if (eventId) seenToolEventIds.add(eventId);
                         try {
                             const ev = JSON.parse(d);
-                            modernToolEventsSeen = true;
                             if (currentEvent === 'tool_start') {
                                 addToolChip(ev.tool, ev);
                                 setStatus('🔧 ' + ev.tool);
@@ -711,45 +720,23 @@
                     if (currentEvent === 'approval_required') {
                         try { addApprovalCard(JSON.parse(d)); } catch(e) {}
                         currentEvent = '';
+                        currentEventId = '';
                         continue;
                     }
                     currentEvent = '';
+                    currentEventId = '';
                     try {
                         const j = JSON.parse(d);
                         const c = j.choices?.[0]?.delta?.content || '';
                         if (!c) continue;
 
-                        // Structured tool events
-                        const m = c.match(/<!-- TOOL:({.*?}) -->/);
-                        if (m) {
-                            if (modernToolEventsSeen) {
-                                // Avoid rendering the same tool a second time
-                                // from the legacy compatibility payload.
-                                continue;
-                            }
-                            try {
-                                const ev = JSON.parse(m[1]);
-                                if (ev.action === 'start') { addToolChip(ev.tool, ev.input); setStatus('🔧 ' + ev.tool); }
-                                else if (ev.action === 'end') {
-                                    completeLastToolChip(ev.output);
-                                    setStatus('Thinking...');
-                                    if (['file_write','file_edit'].includes(ev.tool)) {
-                                        setTimeout(() => { refreshTree(); reloadFile(ev.input?.path); }, 300);
-                                    }
-                                }
-                            } catch(e) {}
-                            const clean = c.replace(/<!-- TOOL:.*? -->\n?/g, '').replace(/^🔧.*\n?/, '').trim();
-                            if (clean) raw += clean;
-                        } else {
-                            // Once text arrives, end the tool group so next tools get a new group
-                            if (c.trim()) toolGroup = null;
-                            // Strip tool-narration lines the model produces
-                            const cleaned = c.replace(/<tool_call>[\s\S]*?<\/tool_call>|<\/?tool_call>/gi, '')
-                                             .replace(/^🔧 Using \w+\.\.\.\s*/gm, '')
-                                             .replace(/^(?:Let me |I'll |I will |Let's |I have |Next,? I |Based on |To understand |I searched |I need to |Given that |Since ).*\n?/gim, '')
-                                             .replace(/^The (?:file|directory|search|next step|key files|position).*(?:I will|let me|next).*\n?/gim, '');
-                            raw += cleaned;
-                        }
+                        const cleaned = c.replace(/<!-- TOOL:.*? -->\n?/g, '')
+                                         .replace(/<tool_call>[\s\S]*?<\/tool_call>|<\/?tool_call>/gi, '')
+                                         .replace(/^🔧 Using \w+\.\.\.\s*/gm, '')
+                                         .replace(/^(?:Let me |I'll |I will |Let's |I have |Next,? I |Based on |To understand |I searched |I need to |Given that |Since ).*\n?/gim, '')
+                                         .replace(/^The (?:file|directory|search|next step|key files|position).*(?:I will|let me|next).*\n?/gim, '');
+                        if (cleaned.trim()) toolGroup = null;
+                        raw += cleaned;
                         if (raw) {
                             aDiv.innerHTML = marked.parse(raw);
                             aDiv.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b));

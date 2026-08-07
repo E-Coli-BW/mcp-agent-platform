@@ -1,10 +1,9 @@
 """Tests for local file tools — file_list, file_read, file_search."""
 
-import os
-import tempfile
 import pytest
 
-from app.tools.agent_mode import set_workspace_root, get_workspace_root
+from app.artifacts import VerifiedArtifact
+from app.tools.agent_mode import set_workspace_root
 from app.tools.definitions import file_list, file_read, file_search
 
 
@@ -15,12 +14,38 @@ def workspace(tmp_path):
 
     # Create sample project structure
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "main.py").write_text("def hello():\n    return 'world'\n\nif __name__ == '__main__':\n    print(hello())\n")
-    (tmp_path / "src" / "utils.py").write_text("import os\n\ndef get_path():\n    return os.getcwd()\n")
+    (tmp_path / "src" / "main.py").write_text(
+        "def hello():\n    return 'world'\n\nif __name__ == '__main__':\n    print(hello())\n"
+    )
+    (tmp_path / "src" / "utils.py").write_text(
+        "import os\n\ndef get_path():\n    return os.getcwd()\n"
+    )
     (tmp_path / "src" / "nested").mkdir()
     (tmp_path / "src" / "nested" / "deep.py").write_text("# deep module\nDEEP = True\n")
     (tmp_path / "README.md").write_text("# Test Project\n\nThis is a test.\n")
     (tmp_path / "config.json").write_text('{"key": "value"}\n')
+    (tmp_path / "workflow.yml").write_text(
+        "Type: AWS::StepFunctions::StateMachine\n"
+        "Definition: {\n"
+        '  "StartAt": "ValidateRequest",\n'
+        '  "States": {\n'
+        '    "ValidateRequest": {\n'
+        '      "Type": "Choice",\n'
+        '      "Choices": [\n'
+        '        {"Next": "ProcessRequest"}\n'
+        "      ],\n"
+        '      "Default": "RejectRequest"\n'
+        "    },\n"
+        '    "ProcessRequest": {\n'
+        '      "Type": "Task",\n'
+        '      "End": true\n'
+        "    },\n"
+        '    "RejectRequest": {\n'
+        '      "Type": "Fail"\n'
+        "    }\n"
+        "  }\n"
+        "}\n"
+    )
     (tmp_path / ".git").mkdir()  # should be ignored
     (tmp_path / "__pycache__").mkdir()  # should be ignored
 
@@ -94,6 +119,20 @@ class TestFileRead:
         result = file_read.invoke({"path": "src/nested/deep.py"})
         assert "DEEP = True" in result
 
+    def test_step_function_read_includes_full_transition_index(self):
+        result = file_read.invoke({"path": "workflow.yml", "start_line": 3, "end_line": 8})
+
+        artifact = VerifiedArtifact.from_tool_output(result)
+        assert artifact is not None
+        assert artifact.plugin_id == "aws_sfn"
+        assert artifact.source_path == "workflow.yml"
+        assert "Machine StartAt -> ValidateRequest" in artifact.content
+        assert "ValidateRequest [Choice]" in artifact.content
+        assert "Next -> ProcessRequest" in artifact.content
+        assert "Default -> RejectRequest" in artifact.content
+        assert "ProcessRequest: End" in artifact.content
+        assert result.index("<<<VERIFIED_ARTIFACT") < result.index("File: workflow.yml")
+
 
 class TestFileSearch:
     def test_search_finds_match(self):
@@ -108,6 +147,21 @@ class TestFileSearch:
     def test_search_in_subdirectory(self):
         result = file_search.invoke({"query": "DEEP", "directory": "src"})
         assert "deep.py" in result
+
+    def test_search_is_case_insensitive(self):
+        result = file_search.invoke({"query": "deep", "directory": "src"})
+        assert "deep.py" in result
+
+    def test_search_supports_extended_regex(self):
+        result = file_search.invoke({"query": "StateMachine|StartAt"})
+        assert "workflow.yml" in result
+        assert "StateMachine" in result
+
+    def test_search_falls_back_to_related_code_tokens(self):
+        result = file_search.invoke({"query": "step functions state transitions"})
+        assert "No exact matches" in result
+        assert "Related code-anchor matches" in result
+        assert "workflow.yml" in result
 
     def test_search_nonexistent_directory(self):
         result = file_search.invoke({"query": "hello", "directory": "nope"})

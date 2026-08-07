@@ -1,13 +1,17 @@
 """Tool definitions — local filesystem tools + remote MCP backends."""
 
 import os
+import re
 import subprocess
+
 from langchain_core.tools import tool
-from app.tools.mcp_client import McpToolClient
-from app.tools.agent_mode import get_workspace_root
-from app.tools.workspace_resolver import WorkspacePathError, validate_path
-from app.config import settings
+
+from app.artifacts import get_artifact_registry
 from app.auth.middleware import tenant_context
+from app.config import settings
+from app.tools.agent_mode import get_workspace_root
+from app.tools.mcp_client import McpToolClient
+from app.tools.workspace_resolver import WorkspacePathError, validate_path
 
 # Lazy-init clients
 _memory_client: McpToolClient | None = None
@@ -104,6 +108,28 @@ async def skill_get(key: str) -> str:
 
 # ── File Tools (local — no backend needed) ────────────────────
 
+_SEARCH_STOP_WORDS = frozenset({
+    "a", "an", "and", "are", "code", "does", "file", "files", "find",
+    "for", "from", "grep", "how", "in", "is", "me", "of", "on", "or",
+    "please", "project", "read", "search", "show", "that", "the", "this",
+    "to", "what", "where", "with",
+})
+
+
+def _related_search_terms(query: str) -> list[str]:
+    """Derive implementation-oriented fallback terms from a prose query."""
+    words = [
+        word
+        for word in re.findall(r"[A-Za-z][A-Za-z0-9_:-]*", query)
+        if len(word) >= 3 and word.lower() not in _SEARCH_STOP_WORDS
+    ]
+    if len(words) < 2:
+        return []
+
+    candidates = [words[index] + words[index + 1] for index in range(len(words) - 1)]
+    candidates.extend(sorted(words, key=len, reverse=True))
+    return list(dict.fromkeys(candidate.lower() for candidate in candidates))[:8]
+
 
 def _resolve_in_workspace(path: str | None, *, default_to_root: bool = True) -> str:
     """Resolve a tool-provided path against the current tenant's workspace.
@@ -122,7 +148,12 @@ def _resolve_in_workspace(path: str | None, *, default_to_root: bool = True) -> 
 
 @tool
 def file_search(query: str, directory: str | None = None) -> str:
-    """Search for text in files using grep. Returns matching lines with file paths and line numbers."""
+    """Search file contents with a case-insensitive extended regex.
+
+    For conceptual questions, translate prose into implementation identifiers,
+    resource types, or config keys joined with ``|``. If a prose query has no
+    exact match, the tool returns related code-token matches when available.
+    """
     try:
         search_dir = _resolve_in_workspace(directory)
     except WorkspacePathError as e:
@@ -130,17 +161,59 @@ def file_search(query: str, directory: str | None = None) -> str:
     if not os.path.isdir(search_dir):
         return f"❌ Directory not found: {directory or '.'}"
     try:
+        command = [
+            'grep', '-Erni', '--include=*.py', '--include=*.java', '--include=*.js',
+            '--include=*.ts', '--include=*.json', '--include=*.yaml', '--include=*.yml',
+            '--include=*.md', '--include=*.html', '--include=*.css', '--include=*.xml',
+            '--include=*.sql', '--include=*.sh', '--include=*.toml', '--include=*.txt',
+            '--include=*.cfg', '-I', '--', query, '.',
+        ]
         result = subprocess.run(
-            ['grep', '-rn', '--include=*.py', '--include=*.java', '--include=*.js', '--include=*.ts',
-             '--include=*.json', '--include=*.yaml', '--include=*.yml', '--include=*.md',
-             '--include=*.html', '--include=*.css', '--include=*.xml', '--include=*.sql',
-             '--include=*.sh', '--include=*.toml', '--include=*.txt', '--include=*.cfg',
-             '-I', '--', query, '.'],
-            cwd=search_dir, capture_output=True, text=True, timeout=15
+            command,
+            cwd=search_dir,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
         )
+        if result.returncode not in (0, 1):
+            return f"❌ Invalid search pattern: {result.stderr.strip()}"
         output = result.stdout.strip()
         if not output:
-            return f"No matches found for '{query}' in {directory or 'workspace'}"
+            related_terms = _related_search_terms(query)
+            if related_terms:
+                related_pattern = '|'.join(re.escape(term) for term in related_terms)
+                command[-2] = related_pattern
+                related = subprocess.run(
+                    command,
+                    cwd=search_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                output = related.stdout.strip()
+                if output:
+                    lines = output.split('\n')
+                    lines.sort(
+                        key=lambda line: max(
+                            (
+                                len(term)
+                                for term in related_terms
+                                if term in line.lower()
+                            ),
+                            default=0,
+                        ),
+                        reverse=True,
+                    )
+                    output = '\n'.join(lines)
+                    terms = ', '.join(related_terms)
+                    output = (
+                        f"No exact matches for '{query}'. Related code-anchor matches "
+                        f"for [{terms}]:\n{output}"
+                    )
+            if not output:
+                return f"No matches found for '{query}' in {directory or 'workspace'}"
         lines = output.split('\n')
         if len(lines) > 50:
             output = '\n'.join(lines[:50]) + f'\n... ({len(lines) - 50} more matches)'
@@ -174,7 +247,15 @@ def file_read(path: str, start_line: int | None = None, end_line: int | None = N
         header = f"File: {path} ({total} lines total, showing {s+1}-{e})\n"
         if e < total and end_line is None:
             header += f"⚠️ Showing first 100 lines. Use file_read('{path}', start_line={e+1}, end_line={min(e+100, total)}) to read more.\n"
-        return header + numbered
+        content = header + numbered
+        artifact = get_artifact_registry().extract_file(
+            path=path,
+            full_text="".join(all_lines),
+            selected_text="".join(selected),
+        )
+        if artifact is not None:
+            content = f"{artifact.to_tool_block()}\n\nSelected source excerpt:\n{content}"
+        return content
     except Exception as e:
         return f"❌ Failed to read {path}: {e}"
 

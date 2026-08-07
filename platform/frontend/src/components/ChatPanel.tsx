@@ -233,6 +233,8 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
       const decoder = new TextDecoder();
       let buf = '';
       let currentEventType: string | null = null;
+      let currentEventId: string | null = null;
+      const seenToolEventIds = new Set<string>();
 
       while (true) {
         const { done, value } = await reader.read();
@@ -249,11 +251,21 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
             continue;
           }
 
+          if (t.startsWith('id:')) {
+            currentEventId = t.slice(3).trim();
+            continue;
+          }
+
           if (!t.startsWith('data:')) continue;
           const d = t.slice(5).trim();
           if (d === '[DONE]') continue;
 
           if (currentEventType === 'tool_start') {
+            const eventId = currentEventId;
+            currentEventType = null;
+            currentEventId = null;
+            if (eventId && seenToolEventIds.has(eventId)) continue;
+            if (eventId) seenToolEventIds.add(eventId);
             try {
               const ev = JSON.parse(d);
               const isWrite = isWriteTool(ev.tool);
@@ -263,7 +275,6 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
               }));
               setStatus('🔧 ' + ev.tool);
             } catch { /* skip */ }
-            currentEventType = null;
             continue;
           }
 
@@ -274,17 +285,22 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
               setStatus(`Approval required: ${ev.tool_name}`);
             } catch { /* skip malformed approval event */ }
             currentEventType = null;
+            currentEventId = null;
             continue;
           }
 
           if (currentEventType === 'tool_end') {
+            const eventId = currentEventId;
+            currentEventType = null;
+            currentEventId = null;
+            if (eventId && seenToolEventIds.has(eventId)) continue;
+            if (eventId) seenToolEventIds.add(eventId);
             try {
               const ev = JSON.parse(d);
               if (isWriteTool(ev.tool) && ev.input?.path) {
                 setTimeout(() => onFileChanged?.(ev.input.path), 300);
               }
             } catch { /* skip */ }
-            currentEventType = null;
             continue;
           }
 
@@ -306,10 +322,12 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
               }
             } catch { /* skip */ }
             currentEventType = null;
+            currentEventId = null;
             continue;
           }
 
           currentEventType = null;
+          currentEventId = null;
 
           try {
             const j = JSON.parse(d);
@@ -317,32 +335,9 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
             if (!c) continue;
             console.log('[ChatPanel] chunk:', c.substring(0, 50));
 
-            // Handle tool events
-            const toolMatch = c.match(/<!-- TOOL:({.*?}) -->/);
-            if (toolMatch) {
-              try {
-                const ev = JSON.parse(toolMatch[1]);
-                if (ev.action === 'start') {
-                  const isWrite = isWriteTool(ev.tool);
-                  updateConversation((conversation) => ({
-                    ...conversation,
-                    messages: [...conversation.messages, { type: 'tool', chip: { tool: ev.tool, input: ev.input, isWrite } }],
-                  }));
-                  setStatus('🔧 ' + ev.tool);
-                } else if (ev.action === 'end' && ['file_write', 'file_edit'].includes(ev.tool)) {
-                  const path = ev.input?.path;
-                  if (path) {
-                    setTimeout(() => {
-                      onFileChanged?.(path);
-                    }, 300);
-                  }
-                }
-              } catch { /* skip */ }
-              const clean = c.replace(/<!-- TOOL:.*? -->\n?/g, '').replace(/^🔧.*\n?/, '').trim();
-              if (clean) assistantContent += clean;
-            } else {
-              assistantContent += c;
-            }
+            assistantContent += c
+              .replace(/<!-- TOOL:.*? -->\n?/g, '')
+              .replace(/^🔧 Using \w+\.\.\.\s*/gm, '');
 
             if (assistantContent) {
               updateConversation((conversation) => {

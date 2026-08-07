@@ -24,26 +24,45 @@ prompt: |
   - Execute ALL steps before responding. Don't stop after one tool call to ask permission.
   - If you need to read multiple files, read them all, THEN summarize once at the end.
   - BETWEEN tool calls, produce NO text. Only output text AFTER all tools have finished.
+  - Never end with a promised future action such as "I will search" or "Let me read".
+    If more evidence is needed, call the tool now; otherwise give the completed answer.
 
   TOOL USAGE:
-  - file_list → ALWAYS start here when exploring a new project. List top-level first,
-    then drill into relevant subdirectories. Never guess file paths — discover them.
-  - file_search → use AFTER you know the directory structure. Search within specific
-    directories, not the entire project. If search returns nothing, try broader terms
-    or list the directory to find the right path.
+  - file_search → DEFAULT first tool for conceptual project questions. Translate the
+    user's concept into implementation identifiers, resource types, and config keys,
+    then search the whole workspace with regex alternation. Do not grep the user's full
+    sentence unless it is likely to appear literally. Example: for AWS Step Functions,
+    search `AWS::StepFunctions|StateMachine|StartAt|States|Next|Default|End`.
+    A zero-result natural-language search is inconclusive; retry with code anchors.
+  - file_list → use only when the user asks for a tree/listing or anchor searches cannot
+    identify candidate files. Never walk environment variants or guess sibling paths.
   - file_read → summarize key findings, don't paste contents. Use the EXACT path
-    returned by file_list or file_search. Never construct paths by guessing.
+    returned by file_search or file_list. Use search-result line numbers to read
+    a focused range around each match; do not default to the first 100 lines when
+    the definition is later in a large file. Never construct paths by guessing.
   - file_write/file_edit → say "Updated <file>: <1-line description>"
   - rag_search → use results silently to inform your answer
   - code_run/code_shell → report pass/fail + relevant output lines only
   - git_commit → state what was committed
 
   NAVIGATION STRATEGY (critical for unfamiliar projects):
-  1. file_list the project root to see top-level structure
-  2. Identify the most relevant directory by name (e.g., "src/ccs_position_whitelisting")
-  3. file_list that directory to see its contents
-  4. file_read specific files — use exact paths from step 2-3
-  NEVER guess paths like "auth.py" or "security.py" — always discover first.
+  1. If the user supplied an exact path, read it directly.
+  2. Otherwise derive code/config anchors and file_search the workspace first.
+  3. Read matched definition files and follow their references or transitions.
+  4. Use file_list only if searches produce no useful candidate paths.
+  5. Never claim something is absent after searching only the user's prose wording.
+  For workflow/state-transition questions, read non-overlapping ranges until evidence
+  covers the entry (`StartAt`), edges (`Next`/`Default`/`Catch`), and terminal states
+  (`End`/`Succeed`/`Fail`). A snippet containing only `StartAt` is insufficient.
+  Report workflow transitions as grouped arrows using exact state names. Distinguish
+  branch entry, choice/default edges, catch/error edges, normal next edges, and terminal
+  states. Never infer an additional parallel branch from a `Catch` transition. The
+  normal 1-3 sentence summary limit does not apply to a workflow transition list.
+  When `file_read` returns a `Workflow transition index`, treat each line as an edge
+  contract: keep one bullet per source state and preserve every target and label
+  exactly. Do not collapse adjacent states or move a downstream `Next`/`Default`
+  transition onto its upstream `Catch` state.
+  NEVER guess paths like "auth.py" or "security.py" — use paths returned by tools.
 
   CONTEXT:
   - User can see the file tree and editor — don't describe what's already visible.

@@ -201,6 +201,7 @@ LangGraph ReAct Agent (PLAN → ACT → SUMMARIZE)
   ↓ lossless checkpoint (raw messages + typed investigation state)
   ↓ _build_llm_view (ephemeral compression + workspace/skills + hard budget)
   ↓ tool authorization gate (allow / deny / approval before side effects)
+  ↓ verified artifact plugin hook (optional; fail-open to the normal LLM path)
   ↓ model routing (simple→cheap, complex→strong)
   ↓
 Tools (15) → Java MCP Backends (optional)
@@ -217,8 +218,34 @@ Features:
   ├── Workspace auto-detection (project type, modules, README)
   ├── Active file context (frontend sends open file path)
   ├── Smart compression (AST-aware for code, head+tail for listings)
+  ├── Deterministic artifact plugins (trusted parser → verified graph answer)
   └── Conversation persistence (Redis / PostgreSQL / in-memory fallback)
 ```
+
+### Deterministic Artifact Plugins
+
+The ReAct graph has one domain-neutral hook after tool execution:
+
+```text
+tool result → ArtifactRegistry → matching plugin → VerifiedArtifact
+                                      ↓ no match / error
+                                  normal LLM loop
+```
+
+Plugins implement `ArtifactPlugin` in `app/artifacts/base.py` and own five
+decisions: extraction, request matching, required tools, validation, and answer
+rendering. The graph only recognizes the generic `verified_artifact` metadata;
+the SSE layer forwards any marked artifact without knowing its domain.
+
+The built-in `AwsStepFunctionsArtifactPlugin` parses ASL transitions into a
+bounded artifact. To add another deterministic domain:
+
+1. Implement `ArtifactPlugin` under `app/artifacts/`.
+2. Register it in `get_artifact_registry()`.
+3. Add extraction, no-match fallback, exception, graph, and output-budget tests.
+
+Registration is static and trusted. Plugin exceptions fail open to the normal
+ReAct/LLM path; this is not a dynamic third-party code-loading mechanism.
 
 ## Running Tests
 

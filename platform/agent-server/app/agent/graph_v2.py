@@ -13,6 +13,7 @@ Architecture:
 """
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Sequence
@@ -26,7 +27,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.tools import BaseTool
-from langgraph.graph import START, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
@@ -42,10 +43,38 @@ from app.agent.tool_router import (
     make_intent_router_node,
     route_after_intent_router,
 )
+from app.artifacts import ArtifactRegistry, get_artifact_registry
 from app.config import settings
 from app.runtime.tool_authorization import wrap_tool_with_authorization
 
 logger = logging.getLogger(__name__)
+
+
+def _deduplicate_tool_calls(response: BaseMessage) -> BaseMessage:
+    """Keep the first identical tool request within a single model turn."""
+    if not isinstance(response, AIMessage) or len(response.tool_calls) < 2:
+        return response
+
+    seen: set[tuple[str, str]] = set()
+    unique_calls = []
+    for tool_call in response.tool_calls:
+        signature = (
+            tool_call.get("name", ""),
+            json.dumps(tool_call.get("args", {}), sort_keys=True, default=str),
+        )
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique_calls.append(tool_call)
+
+    if len(unique_calls) == len(response.tool_calls):
+        return response
+
+    logger.warning(
+        "Dropped %d duplicate tool call(s) from one model turn",
+        len(response.tool_calls) - len(unique_calls),
+    )
+    return response.model_copy(update={"tool_calls": unique_calls})
 
 
 # ── State Definition ──────────────────────────────────────────
@@ -168,6 +197,16 @@ class ContextBudgetExceededError(RuntimeError):
     """Raised when the required prompt floor cannot fit the configured budget."""
 
 
+def reset_turn_state_node(state: AgentState) -> dict[str, Any]:
+    """Reset request-scoped counters without touching checkpointed context."""
+    return {
+        "loop_counter": 0,
+        "consecutive_errors": 0,
+        "critique_attempts": 0,
+        "compression_summary": "",
+    }
+
+
 def update_investigation_node(state: AgentState) -> dict[str, Any]:
     """Extract durable investigation facts without mutating checkpoint messages."""
     investigation = state.investigation.model_copy(deep=True)
@@ -176,6 +215,64 @@ def update_investigation_node(state: AgentState) -> dict[str, Any]:
     if investigation.model_dump() == before:
         return {}
     return {"investigation": investigation}
+
+
+def make_synthesize_artifact_node(
+    registry: ArtifactRegistry | None = None,
+):
+    """Create a node that accepts verified plugin artifacts before another LLM call."""
+    artifact_registry = registry or get_artifact_registry()
+
+    def synthesize_artifact(state: AgentState) -> dict[str, Any]:
+        user_prompt = ""
+        for message in reversed(state.messages):
+            if isinstance(message, HumanMessage):
+                content = str(message.content)
+                if not content.startswith(("🚨 STOP.", "⚠️ The previous tool call", "🪞")):
+                    user_prompt = content
+                    break
+
+        tool_outputs = [
+            str(message.content)
+            for message in state.messages
+            if isinstance(message, ToolMessage)
+        ]
+        selected = artifact_registry.select_for_prompt(
+            prompt=user_prompt,
+            tool_outputs=tool_outputs,
+        )
+        if selected is None:
+            return {}
+        plugin, artifact = selected
+        answer = artifact_registry.render_answer(plugin, artifact)
+        if not answer:
+            return {}
+        return {
+            "messages": [
+                AIMessage(
+                    content=answer,
+                    additional_kwargs={
+                        "verified_artifact": {
+                            "plugin_id": artifact.plugin_id,
+                            "artifact_type": artifact.artifact_type,
+                            "source_path": artifact.source_path,
+                        }
+                    },
+                )
+            ]
+        }
+
+    return synthesize_artifact
+
+
+def route_after_artifact_synthesis(state: AgentState) -> Literal["call_llm", "__end__"]:
+    last = state.messages[-1] if state.messages else None
+    if (
+        isinstance(last, AIMessage)
+        and isinstance(last.additional_kwargs.get("verified_artifact"), dict)
+    ):
+        return "__end__"
+    return "call_llm"
 
 
 def _truncate_optional_context(context: str, max_chars: int) -> str:
@@ -281,7 +378,7 @@ def make_call_llm_node(model: BaseChatModel, tools: list[BaseTool], system_promp
 
         import time
         t0 = time.monotonic()
-        response = await model_with_tools.ainvoke(messages)
+        response = _deduplicate_tool_calls(await model_with_tools.ainvoke(messages))
         elapsed_ms = int((time.monotonic() - t0) * 1000)
 
         # Log what the LLM decided
@@ -341,6 +438,13 @@ def make_route_node(max_steps: int, available_tools: set[str] | None = None):
         r"[\s.:(]",
         re.IGNORECASE,
     )
+    _UNFINISHED_ACTION_RE = re.compile(
+        r"\b(?:I\s+will|I'll|Let\s+me|Let's|"
+        r"Next,?\s+(?:I\s+will|I'll|let's)|The\s+next\s+step\s+is\s+to)\s+"
+        r"(?:now\s+)?(?:perform\s+(?:a\s+)?(?:grep\s+)?search|search|grep|read|"
+        r"inspect|examine|explore|list|check|open|look\s+for|use)\b",
+        re.IGNORECASE,
+    )
 
     def route(state: AgentState) -> Literal["tools", "call_llm", "hallucination_fix", "__end__"]:
         # Max steps guard
@@ -374,7 +478,7 @@ def make_route_node(max_steps: int, available_tools: set[str] | None = None):
             content = last.content if isinstance(last.content, str) else str(last.content)
             from app.agent.tool_contract import missing_tool_requirement
             missing = missing_tool_requirement(list(state.messages), available_tools)
-            if missing and not has_recent_tool_result and state.loop_counter < max_steps - 1:
+            if missing and state.loop_counter < max_steps - 1:
                 logger.warning("Missing required tool call(s): %s; requesting structured retry", missing)
                 return "hallucination_fix"
             # A normal summary after a tool result is valid. Explicit protocol
@@ -386,24 +490,27 @@ def make_route_node(max_steps: int, available_tools: set[str] | None = None):
                 content,
                 re.IGNORECASE,
             ))
-            if not has_recent_tool_result or explicit_tool_syntax:
-                matches = _HALLUCINATED_TOOL_RE.findall(content)
-                if (matches or explicit_tool_syntax) and state.loop_counter < max_steps - 1:
-                    correction_already_sent = (
-                        isinstance(prev, HumanMessage)
-                        and str(prev.content).startswith("🚨 STOP.")
+            unfinished_action = bool(_UNFINISHED_ACTION_RE.search(content))
+            matches = _HALLUCINATED_TOOL_RE.findall(content)
+            fake_tool_use = explicit_tool_syntax or unfinished_action or (
+                bool(matches) and not has_recent_tool_result
+            )
+            if fake_tool_use and state.loop_counter < max_steps - 1:
+                correction_already_sent = (
+                    isinstance(prev, HumanMessage)
+                    and str(prev.content).startswith("🚨 STOP.")
+                )
+                if correction_already_sent:
+                    logger.error(
+                        "🛑 Model repeated an explicit fake tool call after correction; stopping run"
                     )
-                    if correction_already_sent:
-                        logger.error(
-                            "🛑 Model repeated an explicit fake tool call after correction; stopping run"
-                        )
-                        return "__end__"
-                    logger.warning(
-                        "🚨 Hallucinated tool use detected (mentioned %s in text, no actual tool_calls). "
-                        "Injecting correction [loop=%d].",
-                        matches[:3], state.loop_counter,
-                    )
-                    return "hallucination_fix"  # Inject correction then re-call LLM
+                    return "__end__"
+                logger.warning(
+                    "🚨 Hallucinated tool use detected (mentioned %s, unfinished_action=%s). "
+                    "Injecting correction [loop=%d].",
+                    matches[:3], unfinished_action, state.loop_counter,
+                )
+                return "hallucination_fix"  # Inject correction then re-call LLM
 
         # Reflexion: the critic injected a revision request as a 🪞
         # HumanMessage — loop back to call_llm so the actor revises.
@@ -493,8 +600,8 @@ def make_hallucination_fix_node(available_tools: set[str] | None = None):
     """
 
     _CORRECTION = (
-        "🚨 STOP. You just described using tools in plain text, but you did NOT "
-        "actually call any tools. Your response was NOT executed. "
+        "🚨 STOP. You either described or promised tool use, or attempted to finish "
+        "without collecting required evidence. The required action was NOT executed. "
         "You MUST use the function calling interface to invoke tools — "
         "do NOT write tool names or commands in your text response. "
         "Try again: call the appropriate tool NOW using a proper function call."
@@ -504,6 +611,12 @@ def make_hallucination_fix_node(available_tools: set[str] | None = None):
         from app.agent.tool_contract import missing_tool_requirement
         missing = missing_tool_requirement(list(state.messages), available_tools)
         suffix = f" Required tool(s) for this explicit request: {', '.join(missing)}." if missing else ""
+        if "file_read" in missing:
+            suffix += (
+                " Read a new, relevant range from the matched definition. For workflows, "
+                "collect entry, transition, branch/error, and terminal-state evidence; "
+                "do not reread the same snippet."
+            )
         return {"messages": [HumanMessage(content=_CORRECTION + suffix)]}
 
     return fix_hallucination
@@ -591,6 +704,7 @@ def build_agent_graph(
     graph = StateGraph(AgentState)
 
     # Nodes
+    graph.add_node("reset_turn_state", reset_turn_state_node)
     graph.add_node("inject_context", inject_context_node)
     graph.add_node("intent_router", make_intent_router_node(execution_tools))
     graph.add_node("call_llm", make_call_llm_node(model, execution_tools, system_prompt))
@@ -599,13 +713,15 @@ def build_agent_graph(
     graph.add_node("track_errors", make_error_tracking_node())
     graph.add_node("update_investigation_initial", update_investigation_node)
     graph.add_node("update_investigation_tools", update_investigation_node)
+    graph.add_node("synthesize_artifact", make_synthesize_artifact_node())
     graph.add_node(
         "hallucination_fix",
         make_hallucination_fix_node({tool.name for tool in execution_tools}),
     )
 
     # Edges
-    graph.add_edge(START, "inject_context")
+    graph.add_edge(START, "reset_turn_state")
+    graph.add_edge("reset_turn_state", "inject_context")
     graph.add_edge("inject_context", "update_investigation_initial")
     graph.add_edge("update_investigation_initial", "intent_router")
     # intent_router → tools (if dispatched) OR call_llm (fallthrough).
@@ -624,7 +740,12 @@ def build_agent_graph(
     graph.add_edge("hallucination_fix", "call_llm")
     graph.add_edge("tools", "track_errors")
     graph.add_edge("track_errors", "update_investigation_tools")
-    graph.add_edge("update_investigation_tools", "call_llm")
+    graph.add_edge("update_investigation_tools", "synthesize_artifact")
+    graph.add_conditional_edges(
+        "synthesize_artifact",
+        route_after_artifact_synthesis,
+        {"call_llm": "call_llm", "__end__": END},
+    )
 
     return graph.compile(checkpointer=checkpointer)
 
