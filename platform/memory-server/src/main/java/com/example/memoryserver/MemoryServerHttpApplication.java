@@ -1,18 +1,11 @@
 /**
- * Memory Store MCP Server — Java HTTP (long-running) version
+ * Tenant-scoped memory and skill service.
  *
- * Key differences from stdio version:
- *   1. HTTP/SSE transport — multiple clients connect to one server
- *   2. Spring Boot — auto-config, actuator, metrics out of the box
- *   3. ConcurrentHashMap — thread-safe for parallel requests
- *   4. JVM warms up — after first request, latency drops to <5ms
- *   5. Can add Spring Security, rate limiting, audit logging easily
+ * <p>Default runtime: Spring Boot on port 8180, authenticated REST tool bridge,
+ * Spring AI MCP transport, H2 development storage, and optional Redis cache.</p>
  *
- * Run:   mvn spring-boot:run
- * Test:  curl http://localhost:8080/sse
- *
- * Client config (VS Code mcp.json):
- *   { "type": "sse", "url": "http://localhost:8080/sse" }
+ * <p>Run with {@code JWT_SECRET=<32+ byte secret> mvn spring-boot:run} and check
+ * readiness at {@code http://localhost:8180/actuator/health}.</p>
  */
 package com.example.memoryserver;
 

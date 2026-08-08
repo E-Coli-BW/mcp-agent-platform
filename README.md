@@ -72,7 +72,7 @@ A full-stack **Agent runtime platform** built for learning and demonstrating dis
 
 ### 🔐 Platform Engineering
 - **Auth Service**: RS256 JWT + JWKS endpoint + kid-based key rotation + multi-tenant policy
-- **Memory Server**: PostgreSQL full-text search (tsvector+GIN) with TF-IDF fallback + Redis L1 cache
+- **Memory Server**: PostgreSQL full-text search (tsvector+GIN), TF-IDF fallback, and optional Redis cache with no-op degradation
 - **Code Exec Server**: Docker sandbox with OWASP hardening + resource limits
 
 ## Quick Start

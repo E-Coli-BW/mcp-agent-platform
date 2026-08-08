@@ -32,13 +32,16 @@ services:
   # app:
   #   build: .
   #   ports:
-  #     - "8080:8080"
+  #     - "8180:8180"
   #   environment:
+  #     JWT_SECRET: local-dev-secret-at-least-32-bytes
   #     SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/memorydb
   #     SPRING_DATASOURCE_USERNAME: memory
   #     SPRING_DATASOURCE_PASSWORD: memory-dev-pwd
+  #     SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+  #     SPRING_FLYWAY_ENABLED: "true"
+  #     SPRING_JPA_HIBERNATE_DDL_AUTO: validate
   #     SPRING_DATA_REDIS_HOST: redis
-  #     JWT_SECRET: your-secret-here
   #   depends_on:
   #     postgres:
   #       condition: service_healthy

@@ -1,6 +1,10 @@
 # Skill Store — Schema Design
 
-> **Status**: Design draft
+> **Status**: Historical design draft. The skill entity, migrations, service,
+> REST bridge, history, rollback, and feedback paths are now implemented. This
+> document records the original design rationale and future ideas; it is not the
+> runtime contract. Use `../README.md` and the current source/tests for supported
+> behavior.
 > **Author**: auto-generated
 > **Date**: 2026-06-03
 

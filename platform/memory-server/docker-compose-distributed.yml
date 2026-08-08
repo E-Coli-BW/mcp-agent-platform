@@ -1,12 +1,14 @@
-# Distributed Memory Store — Docker Compose
-# Launches: 2 memory-server nodes + Redis + Elasticsearch + Nacos
+# Experimental Memory Storage SPI topology
+# Launches: 2 memory-server processes + Redis + Elasticsearch + Nacos.
+#
+# IMPORTANT: memorystore.backend configures the com.example.memorystore SPI.
+# It does not turn the JPA-backed /api/tools/memory_* REST store into a shared
+# two-node database. Use a shared PostgreSQL datasource for REST-store HA tests.
 #
 # Usage:
 #   docker compose -f docker-compose-distributed.yml up -d
 #   # memory-server-1 on :8180, memory-server-2 on :8181
 #   # Nacos console on :8848, Kibana-less ES on :9200, Redis on :6379
-
-version: '3.9'
 
 services:
   # ── Redis Cluster (single node for dev) ──────────────────
@@ -61,6 +63,7 @@ services:
       - MEMORYSTORE_NACOS_SERVER_ADDR=nacos:8848
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
+      - JWT_SECRET=${JWT_SECRET:-local-distributed-dev-secret-32-bytes}
     depends_on:
       redis:
         condition: service_healthy
@@ -81,6 +84,7 @@ services:
       - MEMORYSTORE_NACOS_SERVER_ADDR=nacos:8848
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
+      - JWT_SECRET=${JWT_SECRET:-local-distributed-dev-secret-32-bytes}
     depends_on:
       redis:
         condition: service_healthy
