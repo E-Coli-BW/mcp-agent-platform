@@ -11,7 +11,7 @@ import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 
-from app.api import chat
+from app.api import runtime_control
 from app.auth.middleware import AuthContext, require_auth
 from app.config import settings
 from app.main import app
@@ -48,8 +48,8 @@ def runtime_api(tmp_path, monkeypatch):
     database = tmp_path / "runtime.sqlite3"
     registry = ApprovalRegistry(str(database))
     checkpoints = SQLiteCheckpointStore(database)
-    monkeypatch.setattr(chat, "get_approval_registry", lambda: registry)
-    monkeypatch.setattr(chat, "get_checkpoint_store", lambda: checkpoints)
+    monkeypatch.setattr(runtime_control, "get_approval_registry", lambda: registry)
+    monkeypatch.setattr(runtime_control, "get_checkpoint_store", lambda: checkpoints)
     monkeypatch.setattr(
         "app.runtime.checkpoint.get_checkpoint_store",
         lambda: checkpoints,

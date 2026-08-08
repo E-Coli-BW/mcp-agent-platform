@@ -220,7 +220,10 @@ def publish_event(
 
 
 # ── Subscribe ──────────────────────────────────────────────────────────────
-async def subscribe(root_session_id: str) -> AsyncIterator[dict]:
+async def subscribe(
+    root_session_id: str,
+    ready: asyncio.Event | None = None,
+) -> AsyncIterator[dict]:
     """Async iterator over events for ``root_session_id``.
 
     Auto-registers the session if not already registered. Caller is
@@ -238,6 +241,8 @@ async def subscribe(root_session_id: str) -> AsyncIterator[dict]:
     async with _sessions_lock:
         state = _sessions[root_session_id]
         state.subscribers.append(q)
+    if ready is not None:
+        ready.set()
     try:
         while True:
             item = await q.get()

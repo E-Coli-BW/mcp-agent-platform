@@ -108,3 +108,24 @@ def test_get_run_events_requires_auth(client):
     resp = client.get("/v1/runs/run-1/events")
 
     assert resp.status_code == 401
+
+
+def test_runtime_control_urls_are_not_registered_by_chat_router():
+    from app.api.chat import router as chat_router
+    from app.api.runtime_control import router as runtime_control_router
+
+    runtime_paths = {route.path for route in runtime_control_router.routes}
+    chat_paths = {route.path for route in chat_router.routes}
+    expected_paths = {
+        "/v1/runs/{run_id}/events",
+        "/v1/runs/{run_id}/checkpoint",
+        "/v1/runtime/recoverable",
+        "/v1/runs/{run_id}/resume",
+        "/v1/runs/{run_id}/cancel",
+        "/v1/approvals/{approval_id}",
+        "/v1/approvals/{approval_id}/decision",
+        "/v1/sessions/{session_id}/children/{child_id}/cancel",
+    }
+
+    assert expected_paths <= runtime_paths
+    assert chat_paths.isdisjoint(runtime_paths)

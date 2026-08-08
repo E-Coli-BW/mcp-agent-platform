@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.auth_proxy import router as auth_proxy_router
 from app.api.chat import router as chat_router
+from app.api.runtime_control import router as runtime_control_router
 from app.api.workspace import router as workspace_router
 from app.config import settings
 from app.middleware.jwt_auth import JwtAuthMiddleware
@@ -127,6 +128,7 @@ app.add_middleware(TracingMiddleware)
 
 # Routes
 app.include_router(chat_router)
+app.include_router(runtime_control_router)
 app.include_router(workspace_router)
 # Auth proxy — forwards /auth/* to the auth-service so the embedded UI
 # (at /ui/, same origin :8580) can use relative URLs without CORS pain.
