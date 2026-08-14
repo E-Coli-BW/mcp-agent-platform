@@ -65,7 +65,6 @@ curl -s http://localhost:8580/health
 # 3. Start Python server (port 8500)
 cd platform/agent-server
 AGENT_DEFAULT_MODEL=qwen2.5:7b AGENT_PORT=8500 \
-  AGENT_AGENT_GRAPH_VERSION=v2 \
   .venv/bin/uvicorn app.main:app --port 8500 &
 
 # 4. Start Java server (port 8580)

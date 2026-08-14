@@ -16,7 +16,6 @@ from typing import Any
 
 from app.config import settings
 
-
 logger = logging.getLogger(__name__)
 
 _MODEL_CALL_SCHEMA_PATH = (
@@ -35,7 +34,7 @@ def _load_model_call_schema() -> dict[str, Any] | None:
     except FileNotFoundError:
         logger.warning("Model-call schema not found at %s", _MODEL_CALL_SCHEMA_PATH)
         return None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - provenance must never break a turn
         logger.warning("Failed to load model-call schema: %s", exc)
         return None
 
@@ -49,7 +48,7 @@ def _get_model_call_validator():
         from jsonschema import Draft202012Validator
 
         return Draft202012Validator(schema)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - optional validation boundary
         logger.warning("jsonschema validator unavailable: %s", exc)
         return None
 
@@ -71,9 +70,9 @@ def validate_model_call_event(payload: dict[str, Any]) -> tuple[bool, str | None
 
 
 def infer_provider(model_name: str) -> str:
-    if model_name.startswith("openai/") or model_name.startswith("gpt-"):
+    if model_name.startswith(("openai/", "gpt-")):
         return "openai"
-    if model_name.startswith("anthropic/") or model_name.startswith("claude"):
+    if model_name.startswith(("anthropic/", "claude")):
         return "anthropic"
     return "ollama"
 
@@ -90,14 +89,13 @@ def current_trace_id() -> str | None:
         if not ctx or not getattr(ctx, "is_valid", False):
             return None
         return format(ctx.trace_id, "032x")
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional telemetry boundary
         return None
 
 
 def build_feature_flags_snapshot() -> dict[str, Any]:
     """Capture effective runtime behavior flags for reproducibility."""
     return {
-        "agent_graph_version": settings.agent_graph_version,
         "prompt_version_default": settings.prompt_version,
         "direct_tool_routing_enabled": settings.direct_tool_routing_enabled,
         "reflexion_enabled": settings.reflexion_enabled,

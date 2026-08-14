@@ -7,10 +7,9 @@ import pytest
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 
+from app.agent.agent_graph.builder import build_agent_graph
 from app.agent.compressor import InvestigationState, estimate_chars
-from app.agent.graph_v2 import build_agent_graph
 from app.config import settings
-
 
 AGENT_SERVER_ROOT = Path(__file__).resolve().parents[1]
 PLATFORM_ROOT = AGENT_SERVER_ROOT.parent

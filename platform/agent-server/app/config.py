@@ -45,7 +45,6 @@ class Settings(BaseSettings):
     prompt_canary_tenants: str = ""  # comma-separated tenant allowlist; empty = all tenants
     prompt_allow_request_override: bool = False
     agent_config_dir: str = "agents"
-    agent_graph_version: str = "v2"  # "v1" (create_react_agent) or "v2" (explicit StateGraph)
 
     # Runtime persistence. Memory preserves the current local-dev behavior;
     # sqlite enables process-restart recovery for run timelines.

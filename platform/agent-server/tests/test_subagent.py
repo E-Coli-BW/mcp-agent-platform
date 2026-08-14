@@ -13,13 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from app.agent.subagent_context import (
     DEFAULT_BUDGET_TOKENS,
-    DEFAULT_DEADLINE_MS,
     MAX_DEPTH_CEILING,
     MAX_FANOUT_CEILING,
     SpawnRejected,

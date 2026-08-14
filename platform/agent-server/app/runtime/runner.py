@@ -128,7 +128,7 @@ class RunCoordinator:
         )
 
         request_context = get_request_context()
-        runtime_name = f"python-{settings.agent_graph_version}"
+        runtime_name = "python-v2"
         effective_temperature = (
             request.temperature
             if request.temperature is not None

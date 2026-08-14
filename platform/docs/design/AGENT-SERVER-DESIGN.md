@@ -283,7 +283,8 @@ platform/agent-server/
 │   │   ├── models.py                # GET /v1/models
 │   │   └── health.py                # GET /health
 │   ├── agent/
-│   │   ├── graph.py                 # LangGraph ReAct agent definition
+│   │   ├── agent_graph/             # Modular LangGraph state, nodes, routing, builder
+│   │   ├── engine/                  # Stable execution contract and Agent registry
 │   │   ├── intent.py                # Intent classifier
 │   │   ├── planner.py               # Tool execution planner
 │   │   └── prompts.py               # System prompts, templates

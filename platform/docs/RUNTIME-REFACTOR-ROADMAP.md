@@ -27,10 +27,10 @@ POST /v1/chat/completions
   -> app/api/chat.py
   -> auth dependency + tenant_context
   -> request_id/run_id/session_id ContextVars
-  -> get_agent(model, tenant, session, prompt_version)
-  -> graph.py cache/factory
-  -> graph_v2.py explicit StateGraph by default
-  -> LangGraph astream_events
+  -> RunCoordinator
+  -> AgentEngine + Engine-owned registry/cache
+  -> agent_graph/ explicit StateGraph
+  -> LangGraph event stream
   -> local tools and MCP REST bridge tools
   -> chat.py converts graph events into SSE chunks/tool events
   -> conversation store append + usage/provenance/Kafka emissions
@@ -39,8 +39,9 @@ POST /v1/chat/completions
 Important files:
 
 - `platform/agent-server/app/api/chat.py`
-- `platform/agent-server/app/agent/graph.py`
-- `platform/agent-server/app/agent/graph_v2.py`
+- `platform/agent-server/app/agent/engine/`
+- `platform/agent-server/app/agent/agent_graph/`
+- `platform/agent-server/app/runtime/runner.py`
 - `platform/agent-server/app/tools/definitions.py`
 - `platform/agent-server/app/tools/mcp_client.py`
 - `platform/agent-server/app/store/conversation.py`
@@ -49,8 +50,8 @@ Important files:
 
 ## 2.2 Current runtime graph
 
-Default config sets `agent_graph_version = "v2"`, so the actual runtime uses
-`graph_v2.py` unless explicitly switched to v1.
+The runtime has one graph implementation under `app/agent/agent_graph/`.
+There is no graph-version switch or legacy v1 production path.
 
 Current v2 graph:
 
@@ -92,7 +93,7 @@ There are multiple state mechanisms:
 
 | State | Current owner | Storage | Notes |
 |---|---|---|---|
-| Graph checkpoint | LangGraph checkpointer via `graph.py` | Redis/Postgres if env set, else MemorySaver | Stores lossless messages plus typed investigation state; model-view compression is not persisted |
+| Graph checkpoint | `app/agent/checkpointing.py` | Redis/Postgres if env set, else MemorySaver | Stores lossless messages plus typed investigation state; model-view compression is not persisted |
 | Chat history | `ConversationStore` | Redis list + local LRU fallback | Separate from graph checkpoint |
 | Request metadata | ContextVars | process-local | `request_id`, `run_id`, `session_id`, `prompt_version` |
 | Model provenance | `model_provenance.py` + Kafka producer | Kafka best effort | Strong schema direction |
@@ -732,7 +733,7 @@ Common probes:
 
 | Challenge | Current coverage | Notes |
 |---|---|---|
-| Loop exit/error recovery | Partial/strong | `graph_v2.py` has explicit state, max steps, consecutive error tracking, hallucination fix. Need terminal reason events. |
+| Loop exit/error recovery | Partial/strong | `agent_graph/` has explicit state, max steps, consecutive error tracking, hallucination fix, and stable terminal reasons. |
 | Tool contracts/safety | Partial | `ToolInvocationEnvelope`, `ToolRisk`, workspace path validation, and a unified fail-closed pre-execution wrapper are enforced. Need durable policy configuration and uniform timeout/retry metadata. |
 | Observability | Partial/strong | Model provenance, runtime run events, tool invocation metadata, `/v1/runs/{run_id}/events`. Need durable store and query/report tooling. |
 | Evaluation | Partial/strong | Existing eval harness plus API scenario harness. Need integration into CI/eval reports and domain cases. |

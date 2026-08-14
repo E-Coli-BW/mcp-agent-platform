@@ -2,7 +2,7 @@
 
 from langchain_core.tools import tool
 
-from app.agent.graph_v2 import _truncate_tool_output
+from app.agent.agent_graph.nodes.tools import _truncate_tool_output
 from app.artifacts import ArtifactRegistry, VerifiedArtifact
 from app.artifacts.step_functions import AwsStepFunctionsArtifactPlugin
 

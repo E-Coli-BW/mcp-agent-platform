@@ -10,6 +10,9 @@ from langchain_core.messages import HumanMessage
 from app.agent.engine import AgentResumeRequest, AgentTurnRequest
 from app.agent.engine.langgraph import LangGraphAgentEngine
 
+LEGACY_GRAPH_MODULE = "app.agent." + "graph"
+LEGACY_GRAPH_V2_MODULE = LEGACY_GRAPH_MODULE + "_v2"
+
 
 def test_platform_layers_do_not_import_concrete_agent_graphs():
     app_dir = Path(__file__).parents[1] / "app"
@@ -25,8 +28,8 @@ def test_platform_layers_do_not_import_concrete_agent_graphs():
                 elif isinstance(node, ast.ImportFrom) and node.module:
                     imported_modules.append(node.module)
             for module_name in imported_modules:
-                if module_name == "app.agent.graph" or module_name.startswith(
-                    "app.agent.graph_"
+                if module_name == LEGACY_GRAPH_MODULE or module_name.startswith(
+                    LEGACY_GRAPH_MODULE + "_"
                 ):
                     violations.append(
                         f"{module_path.relative_to(app_dir)} imports {module_name}"
@@ -77,11 +80,11 @@ def test_modular_agent_graph_does_not_import_compatibility_facades():
                 module_name = node.module
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name in {"app.agent.graph", "app.agent.graph_v2"}:
+                    if alias.name in {LEGACY_GRAPH_MODULE, LEGACY_GRAPH_V2_MODULE}:
                         violations.append(
                             f"{module_path.relative_to(app_dir)} imports {alias.name}"
                         )
-            if module_name in {"app.agent.graph", "app.agent.graph_v2"}:
+            if module_name in {LEGACY_GRAPH_MODULE, LEGACY_GRAPH_V2_MODULE}:
                 violations.append(
                     f"{module_path.relative_to(app_dir)} imports {module_name}"
                 )
@@ -89,33 +92,11 @@ def test_modular_agent_graph_does_not_import_compatibility_facades():
     assert violations == []
 
 
-def test_graph_v2_is_a_compatibility_export_module():
+def test_legacy_graph_modules_are_removed():
     app_dir = Path(__file__).parents[1] / "app"
-    facade = app_dir / "agent" / "graph_v2.py"
-    tree = ast.parse(facade.read_text())
-
-    assert not [
-        node
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    ]
-
-
-def test_graph_compatibility_module_does_not_own_agent_cache():
-    app_dir = Path(__file__).parents[1] / "app"
-    facade = app_dir / "agent" / "graph.py"
-    tree = ast.parse(facade.read_text())
-    assigned_names = {
-        target.id
-        for node in tree.body
-        if isinstance(node, (ast.Assign, ast.AnnAssign))
-        for target in (
-            node.targets if isinstance(node, ast.Assign) else [node.target]
-        )
-        if isinstance(target, ast.Name)
-    }
-
-    assert not {"_agents", "_agent_tool_names", "_agent_lock"} & assigned_names
+    assert not (app_dir / "agent" / "graph.py").exists()
+    assert not (app_dir / "agent" / "graph_v2.py").exists()
+    assert not (app_dir / "agent" / ("model_" + "fallback.py")).exists()
 
 
 class FakeLangGraphAgent:

@@ -1,6 +1,6 @@
 # Agent Runtime Boundary Refactor
 
-> Status: accepted migration contract, Phases 1-3 complete; Phase 4 not started.
+> Status: complete. Phases 1-4 accepted and implemented; refactor closed.
 > Created: 2026-08-14.
 > Scope owner: `platform/agent-server`.
 >
@@ -284,22 +284,121 @@ Status: complete (2026-08-14).
 
 ## Phase 4 - Retire v1 and compatibility shims
 
+Status: complete (2026-08-14).
+
 ### Preconditions
 
 - No production setting or documented deployment selects v1.
 - Search and runtime telemetry show no v1 usage.
 - All tests patch the Engine boundary rather than v1 factories.
 
+### Readiness Decision
+
+- Checked-in deployment and environment configuration does not select v1.
+- The local durable database contains only an empty
+  `agent_run_checkpoints` table. It has no persisted `run_started` timeline,
+  so this repository cannot claim a telemetry observation window or prove zero
+  historical v1 traffic from local data.
+- On 2026-08-14 the repository owner explicitly requested completion of Phase
+  4 in the current iteration. That request waives the compatibility release
+  window and telemetry gate for deleting internal facades. Historical
+  provenance schemas keep accepting `python-v1` events; this waiver does not
+  rewrite or invalidate stored history.
+
 ### Scope
 
-- Remove `create_react_agent` v1 path and `agent_graph_version` switch.
-- Remove compatibility exports after one release window.
-- Update architecture documents and deployment examples.
+- Make the Engine registry unconditionally build the modular v2 graph.
+- Remove the `create_react_agent` v1 path, `agent_graph_version` setting, and
+  runtime/eval controls that select a graph version.
+- Delete internal compatibility modules `graph.py`, `graph_v2.py`, and
+  `model_fallback.py`; point production and tests at owning modules.
+- Keep runtime provenance as the stable `python-v2` value while retaining v1
+  in historical event schemas.
+- Update current architecture documents, observability examples, and eval
+  harness controls.
+
+### Auxiliary Modularization Scope
+
+The repository-owner request also includes a bounded cleanup of non-mainline
+Agent and RAG code. It is part of Phase 4 and is limited to these ownership
+changes:
+
+```text
+app/agent/intent/
+  __init__.py       # stable exports formerly provided by intent.py
+  meta.py           # meta-question detection and direct answers
+  routing.py        # topic-switch and complexity classification
+  evaluation.py     # classifier cases, adapters, and result contracts
+  eval_cli.py       # live inference, rendering, and result persistence
+
+app/agent/classifier_eval.py
+  # thin CLI and compatibility re-export facade
+
+app/agent/compressor/
+  __init__.py       # stable old import path and serialized class identity
+  investigation.py # InvestigationState and fact extraction
+  messages.py      # message budgets and compression policy
+
+app/rag/eval/
+  ranking.py              # reusable ranking metrics/evaluation
+  compression_cases.py    # benchmark fixtures only
+  compression_metrics.py  # compression baselines and scoring
+  benchmark_compression.py # thin benchmark CLI
+  benchmark_rerankers.py   # thin strategy benchmark CLI
+  dataset.py               # stable BENCHMARK/CLI exports
+```
+
+### Auxiliary Non-Goals
+
+- No subagent, fleet bus, verifier, model-recovery, or graph-topology changes.
+- No production retriever, indexer, embedding, or reranker behavior changes.
+- No broad lint cleanup or deletion of heuristic APIs merely because their
+  current call count is low.
+- No changes to prompt text, tool schemas, public HTTP/SSE contracts, or YAML
+  AgentConfig.
+
+### Ordered Slices
+
+1. Add characterization tests and retire the v1 runtime/configuration path.
+2. Retarget production/tests to owners and delete compatibility modules.
+3. Convert intent and compressor modules into stable-export packages.
+4. Extract reusable RAG eval cases/metrics while preserving benchmark CLIs.
+5. Update current docs/eval controls and add a static no-v1 regression guard.
 
 ### Exit criteria
 
 - One production graph path.
 - No v1 cache, prompt-modifier, or factory branches remain.
+- No active production, test, deployment, or current-document import depends
+  on the three deleted compatibility modules.
+- Intent, compressor, and RAG eval packages retain their existing public
+  behavior through focused characterization tests.
+- Full Agent Server tests, touched-file Ruff, editor diagnostics, and
+  `git diff --check` pass.
+
+### Completion record
+
+- Removed the graph-version setting and every production/eval branch that could
+  select the legacy v1 graph. Runtime provenance is now always `python-v2`.
+- Deleted `graph.py`, `graph_v2.py`, and `model_fallback.py`; production and
+  tests import the Engine, modular graph, model, and checkpoint owners directly.
+- Updated config watching, subagent tool truncation, logging, observability,
+  current architecture docs, and eval controls for the single graph path.
+- Added a static retirement guard covering active application, test, eval, and
+  current-document surfaces. Historical provenance schemas continue accepting
+  `python-v1` records.
+- Converted `intent.py` into a stable-export package and separated meta answers,
+  routing heuristics, classifier evaluation, and its CLI.
+- Converted `compressor.py` into investigation and message-policy modules while
+  preserving `app.agent.compressor` class identity and pickle compatibility.
+- Split RAG eval fixtures, compression metrics, ranking metrics, and benchmark
+  CLIs. Ranking evaluation now owns its Python 3.13 event-loop lifecycle, and
+  the reranker benchmark calls the explicit heuristic implementation.
+- Explicit non-goals remained untouched: subagent behavior, model recovery,
+  graph topology, and production retrieval/reranking behavior.
+- Final Agent Server suite: 614 passed, 1 skipped.
+- All Phase 4 Python files pass Ruff; editor diagnostics, eval Python/shell
+  syntax checks, and `git diff --check` pass.
 
 ## 8. Invariants During Migration
 

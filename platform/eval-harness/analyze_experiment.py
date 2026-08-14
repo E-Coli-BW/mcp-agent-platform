@@ -25,10 +25,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import glob
 import json
 import math
-import os
 import statistics
 import sys
 from pathlib import Path
@@ -186,7 +184,8 @@ def load_summary_scores(summary_path: Path) -> dict[str, dict[str, dict[str, int
     """Parse summary.json and return per-case-per-scorer pass counts.
     Returns: {case_id: {scorer_name: {"passed": int, "total": int}}}
     """
-    s = json.load(open(summary_path))
+    with summary_path.open() as summary_file:
+        s = json.load(summary_file)
     out: dict[str, dict[str, dict[str, int]]] = {}
     for case in s.get("cases", []):
         case_id = case["case_id"]
@@ -212,7 +211,8 @@ def aggregate_cell(cell: str, exp_dir: Path) -> dict[str, Any]:
     traj_path = run_dir / "trajectories.jsonl"
     summary_path = run_dir / "summary.json"
     rows = load_trajectories(traj_path)
-    summary = json.load(open(summary_path))
+    with summary_path.open() as summary_file:
+        summary = json.load(summary_file)
 
     # Behavior probes from agent log — direct evidence the flags
     # actually took effect, not just that the env var was set.
@@ -308,7 +308,7 @@ def scan_agent_log_for_behavior(log_path: Path) -> dict[str, Any]:
     """Grep the agent log for direct evidence of which features fired.
 
     Returns counts of:
-        - graph_v2_invocations    — proof v2 graph is running
+        - agent_graph_invocations — proof the modular graph is running
         - router_dispatches       — proof C2 router fired (🚦 marker)
         - reflexion_critiques     — proof C1 critic ran (🪞 marker)
         - verifier_invocations    — proof C3 verifier ran
@@ -323,7 +323,7 @@ def scan_agent_log_for_behavior(log_path: Path) -> dict[str, Any]:
         return {"_log_missing": str(log_path)}
     text = log_path.read_text(errors="replace")
     return {
-        "graph_v2_invocations": text.count("[app.agent.graph_v2]"),
+        "agent_graph_invocations": text.count("[app.agent.agent_graph"),
         "router_dispatches": text.count("🚦 router →"),
         "reflexion_critiques": text.count("🪞"),
         "verifier_invocations": text.count("subagent_verifier") + text.count("VerifyVerdict"),
@@ -460,7 +460,7 @@ def write_csv(cells: dict[str, dict], out_path: Path) -> None:
 def write_markdown(cells: dict[str, dict], hypotheses: list[dict], out_path: Path) -> None:
     lines = []
     lines.append("# Experiment Analysis — 4-cell Factorial\n")
-    lines.append(f"Generated automatically by `analyze_experiment.py`. Re-run to refresh.\n")
+    lines.append("Generated automatically by `analyze_experiment.py`. Re-run to refresh.\n")
     lines.append("## Cell descriptions\n")
     for cell, desc in CELL_DESCRIPTIONS.items():
         present = cell in cells and not cells[cell].get("missing")
@@ -490,7 +490,7 @@ def write_markdown(cells: dict[str, dict], hypotheses: list[dict], out_path: Pat
     lines.append("## Behavior probes (independent evidence from agent logs)\n")
     lines.append("Counted from agent stdout per cell. A flag being set in env does NOT prove "
                  "the feature fired on this prompt distribution — these counts do.\n")
-    lines.append("| Cell | graph_v2 invocations | C2 router dispatches | C1 critiques | C3 verifier invocations | spawn_subagent calls (runs) |")
+    lines.append("| Cell | agent graph invocations | C2 router dispatches | C1 critiques | C3 verifier invocations | spawn_subagent calls (runs) |")
     lines.append("|---|---:|---:|---:|---:|---:|")
     for cell in CELLS:
         c = cells.get(cell)
@@ -501,7 +501,7 @@ def write_markdown(cells: dict[str, dict], hypotheses: list[dict], out_path: Pat
         spawn_calls = p.get("spawn_subagent_tool_calls", 0)
         spawn_runs = p.get("runs_with_spawn_subagent", 0)
         lines.append(
-            f"| {cell} | {p.get('graph_v2_invocations', 0)} | "
+            f"| {cell} | {p.get('agent_graph_invocations', 0)} | "
             f"{p.get('router_dispatches', 0)} | "
             f"{p.get('reflexion_critiques', 0)} | "
             f"{p.get('verifier_invocations', 0)} | "
@@ -606,7 +606,7 @@ def main() -> int:
     print(f"  ✅ wrote {csv_path}", file=sys.stderr)
 
     # Print headline hypothesis verdicts
-    print(f"\n--- Hypothesis verdicts ---", file=sys.stderr)
+    print("\n--- Hypothesis verdicts ---", file=sys.stderr)
     for h in hypotheses:
         print(f"  {h['id']}: {h['verdict']}  ({h['name']})", file=sys.stderr)
 

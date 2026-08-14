@@ -12,12 +12,13 @@ Run:
 """
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agent.graph_v2 import AgentState
+from app.agent.agent_graph.state import AgentState
 from app.agent.tool_router import (
     READ_ONLY_TOOL_ALLOWLIST,
     RoutedCall,
@@ -25,7 +26,6 @@ from app.agent.tool_router import (
     make_intent_router_node,
     route_after_intent_router,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -355,5 +355,5 @@ class TestRoutedCall:
         router node. Freezing it prevents accidental in-place mutation
         of the args dict shared between threads."""
         call = RoutedCall("memory_search", {"query": "x"}, rule_id="r")
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             call.tool_name = "memory_set"  # type: ignore[misc]

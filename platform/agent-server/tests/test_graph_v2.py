@@ -11,25 +11,33 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.compressor import InvestigationState, estimate_chars
-from app.agent.graph_v2 import (
+from app.agent.agent_graph.builder import build_agent_graph
+from app.agent.agent_graph.nodes.context import (
+    _build_llm_messages,
+    _build_llm_view,
+    inject_context_node,
+    reset_turn_state_node,
+    update_investigation_node,
+)
+from app.agent.agent_graph.nodes.model import _deduplicate_tool_calls
+from app.agent.agent_graph.nodes.tools import (
+    _format_tool_error,
+    make_error_tracking_node,
+)
+from app.agent.agent_graph.nodes.verification import (
+    make_hallucination_fix_node,
+    make_synthesize_artifact_node,
+)
+from app.agent.agent_graph.routing import (
+    make_route_node,
+    route_after_artifact_synthesis,
+)
+from app.agent.agent_graph.state import (
     AgentState,
     AgentTerminationError,
     ContextBudgetExceededError,
-    _build_llm_messages,
-    _build_llm_view,
-    _deduplicate_tool_calls,
-    _format_tool_error,
-    build_agent_graph,
-    inject_context_node,
-    make_error_tracking_node,
-    make_hallucination_fix_node,
-    make_route_node,
-    make_synthesize_artifact_node,
-    reset_turn_state_node,
-    route_after_artifact_synthesis,
-    update_investigation_node,
 )
+from app.agent.compressor import InvestigationState, estimate_chars
 from app.artifacts import ArtifactRegistry, VerifiedArtifact
 
 # ── AgentState ────────────────────────────────────────────────

@@ -53,7 +53,6 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -69,21 +68,8 @@ MEMORY_PORT = 8180
 
 # ── Cell definitions ─────────────────────────────────────────────────
 # Each cell maps to a set of env vars passed to the agent process.
-# AGENT_GRAPH_VERSION=v2 is a CONTROL (constant across all cells) —
-# v1 doesn't have C2/C3 wired so the comparison would be meaningless.
-#
 # Env-var naming convention (pydantic-settings env_prefix='AGENT_'):
-#   field name `reflexion_enabled`     → env `AGENT_REFLEXION_ENABLED`
-#   field name `agent_graph_version`   → env `AGENT_AGENT_GRAPH_VERSION`  (sic!)
-# The double-AGENT for the graph-version field is *not* a typo — the
-# field happens to already start with `agent_`, and pydantic-settings
-# does literal prefix concatenation, not de-duplication. Caught the
-# hard way by a 35-minute run where every cell behaved identically.
-COMMON_ENV = {
-    "AGENT_AGENT_GRAPH_VERSION": "v2",
-    # Keep production defaults for everything else so results reflect
-    # real-world behaviour, not a stripped-down lab agent.
-}
+#   field name `reflexion_enabled` → env `AGENT_REFLEXION_ENABLED`
 
 # IMPORTANT: pydantic-settings reads env vars with the `AGENT_` prefix
 # (see app/config.py:183: model_config = {"env_prefix": "AGENT_", ...}).
@@ -94,19 +80,16 @@ COMMON_ENV = {
 # applied" — see start_agent_with_env for the new health-check assertion.
 CELLS = {
     "A": {
-        **COMMON_ENV,
         "AGENT_REFLEXION_ENABLED": "false",
         "AGENT_DIRECT_TOOL_ROUTING_ENABLED": "false",
         "AGENT_SUBAGENT_VERIFIER_ENABLED": "false",
     },
     "B": {
-        **COMMON_ENV,
         "AGENT_REFLEXION_ENABLED": "false",
         "AGENT_DIRECT_TOOL_ROUTING_ENABLED": "true",
         "AGENT_SUBAGENT_VERIFIER_ENABLED": "false",
     },
     "C": {
-        **COMMON_ENV,
         "AGENT_REFLEXION_ENABLED": "false",
         "AGENT_DIRECT_TOOL_ROUTING_ENABLED": "false",
         "AGENT_SUBAGENT_VERIFIER_ENABLED": "true",
@@ -115,7 +98,6 @@ CELLS = {
         "AGENT_SUBAGENT_VERIFIER_AUTO_RETRY": "true",
     },
     "D": {
-        **COMMON_ENV,
         "AGENT_REFLEXION_ENABLED": "true",
         "AGENT_DIRECT_TOOL_ROUTING_ENABLED": "true",
         "AGENT_SUBAGENT_VERIFIER_ENABLED": "true",
@@ -243,32 +225,6 @@ def assert_flag_names_valid(cell_env: dict[str, str]) -> None:
         )
 
 
-def verify_flag_applied(cell_env: dict[str, str], log_path: Path) -> None:
-    """Best-effort: scan the fresh agent log for any contradiction
-    between the requested flags and the agent's actual reported state.
-
-    We can't directly read the agent's `settings` object over HTTP (no
-    /config endpoint), so we wait briefly, then look for known startup
-    log lines that signal which graph version booted. graph.py logs
-    differently for v1 vs v2; absence of v2 marker when v2 was requested
-    is a hard failure.
-    """
-    # Give the agent a moment to log its startup lines.
-    time.sleep(1.0)
-    want_v2 = cell_env.get("AGENT_AGENT_GRAPH_VERSION") == "v2"
-    if not want_v2:
-        return  # nothing to verify for v1
-    try:
-        log_text = log_path.read_text(errors="replace")
-    except FileNotFoundError:
-        return  # log not written yet; skip
-    # graph_v2 is imported lazily inside get_agent(); the first sign of
-    # v2 is when an actual request is dispatched. So we don't fail here
-    # — we just print a warning if no v2 evidence yet.
-    if "graph_v2" not in log_text and "v2" not in log_text:
-        print(f"  ⚠️  no graph_v2 evidence in {log_path.name} yet (will verify after first request)")
-
-
 def seed_memory_for_lift_case(jwt: str) -> None:
     """The lift_memory_recall_across_session case requires a memory
     seeded before the run (see the case YAML's `requires_setup`).
@@ -291,7 +247,7 @@ def seed_memory_for_lift_case(jwt: str) -> None:
         # Just warn and continue; the lift case will fail-correctly.
         print(f"  ⚠️  could not seed memory ({r.status_code} {r.text[:120]})")
     else:
-        print(f"  🌱  seeded fav-color-eval memory for lift case")
+        print("  🌱  seeded fav-color-eval memory for lift case")
 
 
 # ── Per-cell eval invocation ─────────────────────────────────────────
@@ -310,8 +266,7 @@ def run_cell(cell_id: str, env_overrides: dict[str, str], runs: int,
     pid = start_agent_with_env(env_overrides, log_path)
     print(f"  ▶  agent pid={pid}, waiting for health...")
     wait_agent_healthy()
-    print(f"  ✅ agent healthy")
-    verify_flag_applied(env_overrides, log_path)
+    print("  ✅ agent healthy")
 
     # Per-cell runs subdir under the experiment root.
     cell_dir = out_root / f"cell-{cell_id}"
@@ -413,7 +368,7 @@ def main() -> int:
     print(f"   git SHA: {provenance['git_sha'][:10]} (dirty={provenance['git_dirty']})")
 
     if not args.skip_seed:
-        print(f"\n🌱 pre-seeding memory for lift case...")
+        print("\n🌱 pre-seeding memory for lift case...")
         seed_memory_for_lift_case(jwt)
 
     selected = [c for c in args.cells if c in CELLS]

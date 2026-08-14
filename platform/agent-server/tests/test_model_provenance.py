@@ -19,7 +19,7 @@ def test_infer_provider():
 
 def test_feature_flag_snapshot_has_core_keys():
     flags = build_feature_flags_snapshot()
-    assert "agent_graph_version" in flags
+    assert "agent_" + "graph_version" not in flags
     assert "prompt_version_default" in flags
     assert "direct_tool_routing_enabled" in flags
     assert "reflexion_enabled" in flags

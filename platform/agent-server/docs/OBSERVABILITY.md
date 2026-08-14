@@ -8,7 +8,7 @@ your agent is doing in real time.
 ```bash
 # Terminal 1: Start the agent server with DEBUG logs
 cd platform/agent-server
-AGENT_LOG_LEVEL=DEBUG AGENT_AGENT_GRAPH_VERSION=v2 .venv/bin/python -m uvicorn app.main:app --port 8500
+AGENT_LOG_LEVEL=DEBUG .venv/bin/python -m uvicorn app.main:app --port 8500
 
 # Terminal 2: Generate a dev JWT token (valid 1 hour)
 cd platform/agent-server
@@ -34,15 +34,12 @@ Shows the **what** — request/response and tool decisions:
 
 ```
 17:27:43.849 [agent.chat]          INFO  📩 收到用户消息 [session=test-session-1, model=ops-agent]: create a ticket for the OOM issue
-17:27:43.851 [app.agent.graph_v2]  INFO  📂 Workspace context injected (2340 chars)
-17:27:43.852 [app.agent.graph_v2]  INFO  🧠 LLM call [loop=1, msgs=2, chars=2800, errors=0]
-17:27:44.200 [app.agent.graph_v2]  INFO  🤖 LLM decided to call 1 tool(s): ['file_search'] [349ms]
-17:27:44.350 [app.agent.graph_v2]  INFO     ✅ Tool result [file_search, 1200 chars]: 3 matches found...
-17:27:44.351 [app.agent.graph_v2]  INFO  🧠 LLM call [loop=2, msgs=4, chars=4100, errors=0]
-17:27:45.100 [app.agent.graph_v2]  INFO  🤖 LLM decided to call 1 tool(s): ['ticket_create'] [749ms]
-17:27:45.110 [app.agent.graph_v2]  INFO     ✅ Tool result [ticket_create, 65 chars]: ✅ Ticket created: INC-001
-17:27:45.111 [app.agent.graph_v2]  INFO  🧠 LLM call [loop=3, msgs=6, chars=4500, errors=0]
-17:27:45.800 [app.agent.graph_v2]  INFO  🤖 LLM responded with text [689ms, 230 chars]: Created ticket INC-001...
+17:27:43.851 [app.agent.agent_graph.nodes.context] INFO  Workspace context injected (2340 chars)
+17:27:43.852 [app.agent.agent_graph.nodes.model]   INFO  LLM call [loop=1, msgs=2, chars=2800, errors=0]
+17:27:44.200 [app.agent.agent_graph.nodes.model]   INFO  LLM requested 1 tool(s): ['file_search'] [349ms]
+17:27:44.350 [app.agent.agent_graph.nodes.tools]   INFO  Tool result [file_search, 1200 chars]: 3 matches found...
+17:27:44.351 [app.agent.agent_graph.nodes.model]   INFO  LLM call [loop=2, msgs=4, chars=4100, errors=0]
+17:27:45.800 [app.agent.agent_graph.nodes.model]   INFO  LLM returned text [689ms, 230 chars]: Created ticket INC-001...
 17:27:45.801 [agent.chat]          INFO  📤 Agent 响应 [session=test-session-1, tools=2, 1952ms]: Created ticket INC-001...
 ```
 
@@ -51,12 +48,9 @@ Shows the **what** — request/response and tool decisions:
 Shows the **how** — exact tool arguments, message types, routing decisions:
 
 ```
-17:27:43.851 [app.agent.graph_v2]  DEBUG 🧠 LLM message types: ['SystemMessage', 'HumanMessage']
-17:27:44.200 [app.agent.graph_v2]  DEBUG    🔧 file_search({'query': 'OOM worker-pool'})
-17:27:44.201 [app.agent.graph_v2]  DEBUG ➡️  Routing to tools: ['file_search']
-17:27:44.352 [app.agent.graph_v2]  DEBUG ✅ Error streak reset (was 0)
-17:27:45.100 [app.agent.graph_v2]  DEBUG    🔧 ticket_create({'title': 'OOM in worker-pool', 'severity': 'high', ...})
-17:27:45.801 [app.agent.graph_v2]  DEBUG ➡️  Routing to END (no tool calls)
+17:27:43.851 [app.agent.agent_graph.nodes.model] DEBUG LLM message types: ['SystemMessage', 'HumanMessage']
+17:27:44.200 [app.agent.agent_graph.nodes.model] INFO  LLM requested 1 tool(s): ['file_search']
+17:27:44.352 [app.agent.agent_graph.nodes.tools] INFO  Tool result [file_search, 1200 chars]
 ```
 
 ## How to Read the Logs
@@ -92,21 +86,18 @@ Each request follows this pattern:
 
 **Tool error with retry:**
 ```
-17:27:44.350 [app.agent.graph_v2]  INFO     ❌ Tool result [file_read, 30 chars]: ❌ File not found: bad.py
-17:27:44.351 [app.agent.graph_v2]  WARN  ⚠️  Tool error detected (consecutive: 1/3)
-17:27:44.500 [app.agent.graph_v2]  INFO  🧠 LLM call [loop=2, msgs=5, chars=3200, errors=1]
-17:27:45.200 [app.agent.graph_v2]  INFO  🤖 LLM decided to call 1 tool(s): ['file_list']  ← recovered!
+17:27:44.350 [app.agent.agent_graph.nodes.tools] WARN Tool error detected (consecutive: 1/3)
+17:27:44.500 [app.agent.agent_graph.nodes.model] INFO LLM call [loop=2, msgs=5, chars=3200, errors=1]
 ```
 
 **Agent forced to stop:**
 ```
-17:27:50.000 [app.agent.graph_v2]  WARN  🛑 Agent hit max steps (20/20), forcing end
+AgentTerminationError: agent exhausted its 20-step budget
 ```
 
 **Context compression:**
 ```
-17:27:46.000 [app.agent.graph_v2]  DEBUG 📦 Compressed tool output [file_read]: 5000 → 1500 chars
-17:27:46.001 [app.agent.graph_v2]  INFO  📦 Compressed 3 old tool outputs
+17:27:46.001 [app.agent.compressor.messages] INFO Compression: 5000 -> 1500 chars
 ```
 
 ## Log Levels Cheat Sheet
@@ -122,7 +113,6 @@ Each request follows this pattern:
 ```bash
 # .env file
 AGENT_LOG_LEVEL=DEBUG              # Log level (DEBUG/INFO/WARNING)
-AGENT_AGENT_GRAPH_VERSION=v2       # Use v2 graph (has structured logging)
 
 # Or as environment variables
 export AGENT_LOG_LEVEL=DEBUG

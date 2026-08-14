@@ -16,8 +16,9 @@ def reset_agent_registry():
 class TestPromptGovernedAgentCache:
     @pytest.mark.asyncio
     async def test_prompt_version_isolation_in_cache(self, monkeypatch):
-        import app.agent.graph as graph_mod
+        import app.agent.agent_graph.factory as graph_factory
         import app.registry.config_loader as config_loader_mod
+        from app.agent.engine.registry import get_agent_registry
         from app.config import settings
 
         monkeypatch.setattr(settings, "prompt_allow_request_override", True)
@@ -31,17 +32,18 @@ class TestPromptGovernedAgentCache:
             seen.append((temperature, obj))
             return obj
 
-        monkeypatch.setattr(graph_mod, "create_agent", fake_create_agent)
+        monkeypatch.setattr(graph_factory, "create_agent_v2", fake_create_agent)
         monkeypatch.setattr(config_loader_mod, "load_all_configs", lambda _d: {})
 
-        a_v1 = await graph_mod.get_agent(
+        registry = get_agent_registry()
+        a_v1 = await registry.get_agent(
             "qwen2.5:7b",
             temperature=0.0,
             tenant_id="tenant-a",
             session_id="tenant-a:s1",
             prompt_version="v1",
         )
-        a_v2 = await graph_mod.get_agent(
+        a_v2 = await registry.get_agent(
             "qwen2.5:7b",
             temperature=0.0,
             tenant_id="tenant-a",
@@ -53,14 +55,11 @@ class TestPromptGovernedAgentCache:
 
     @pytest.mark.asyncio
     async def test_tenant_isolation_in_cache(self, monkeypatch):
-        import app.agent.graph as graph_mod
+        import app.agent.agent_graph.factory as graph_factory
         import app.registry.config_loader as config_loader_mod
+        from app.agent.engine.registry import get_agent_registry
         from app.config import settings
 
-        # Force v1 path: this test only mocks create_agent (v1), but
-        # get_agent dispatches to create_agent_v2 when graph_version=v2
-        # (the default). See test_temperature_plumbing.py for the same fix.
-        monkeypatch.setattr(settings, "agent_graph_version", "v1")
         monkeypatch.setattr(settings, "prompt_allow_request_override", False)
         monkeypatch.setattr(settings, "prompt_tenant_versions_json", "{}")
         monkeypatch.setattr(settings, "prompt_canary_enabled", False)
@@ -71,16 +70,17 @@ class TestPromptGovernedAgentCache:
             call_count["n"] += 1
             return object()
 
-        monkeypatch.setattr(graph_mod, "create_agent", fake_create_agent)
+        monkeypatch.setattr(graph_factory, "create_agent_v2", fake_create_agent)
         monkeypatch.setattr(config_loader_mod, "load_all_configs", lambda _d: {})
 
-        a_t1 = await graph_mod.get_agent(
+        registry = get_agent_registry()
+        a_t1 = await registry.get_agent(
             "qwen2.5:7b",
             temperature=0.0,
             tenant_id="tenant-a",
             session_id="tenant-a:s1",
         )
-        a_t2 = await graph_mod.get_agent(
+        a_t2 = await registry.get_agent(
             "qwen2.5:7b",
             temperature=0.0,
             tenant_id="tenant-b",

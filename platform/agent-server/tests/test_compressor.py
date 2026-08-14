@@ -1,5 +1,7 @@
 """Tests for context compression logic."""
 
+import pickle
+
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agent.compressor import (
@@ -52,7 +54,7 @@ class TestCompressMessages:
             AIMessage(content="Fixed!"),
         ]
         # Budget that forces compression of middle
-        result, summary = compress_messages(msgs, budget_chars=2000)
+        result, _ = compress_messages(msgs, budget_chars=2000)
         # Should be shorter than original
         assert estimate_tokens(result) < estimate_tokens(msgs)
 
@@ -99,7 +101,7 @@ class TestCompressMessages:
             HumanMessage(content="e"),
             AIMessage(content="f"),
         ]
-        result, summary = compress_messages(msgs, budget_chars=800)
+        result, _ = compress_messages(msgs, budget_chars=800)
         tool_msgs = [m for m in result if isinstance(m, ToolMessage)]
         if tool_msgs:
             # Should be truncated to first line
@@ -152,6 +154,14 @@ class TestCompressMessages:
 
 
 class TestInvestigationState:
+    def test_stable_module_identity_and_pickle_round_trip(self):
+        state = InvestigationState(goal="inspect the cache")
+
+        restored = pickle.loads(pickle.dumps(state))
+
+        assert InvestigationState.__module__ == "app.agent.compressor"
+        assert restored == state
+
     def test_to_summary_block(self):
         state = InvestigationState(
             goal="Fix NPE in UserService",

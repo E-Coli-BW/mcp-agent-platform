@@ -54,7 +54,6 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -101,7 +100,7 @@ class SubagentResult:
     completion_tokens: int = 0
     duration_ms: int = 0
 
-    error: Optional[str] = None
+    error: str | None = None
     """Set if the spawn failed mid-flight (LLM exception, deadline reached,
     tool error escaped, etc.). When set, ``answer`` is usually empty and
     the LLM should treat the spawn as failed."""
@@ -111,14 +110,14 @@ class SubagentResult:
     log to draw the tree."""
 
     # ── C3 verifier fields ─────────────────────────────────────────────
-    verified: Optional[bool] = None
+    verified: bool | None = None
     """Verifier outcome — None when verifier didn't run (disabled, crashed,
     unparseable), True when the answer passed grading, False when it
     failed and was either auto-retried unsuccessfully or shipped with
     a ⚠️ marker. None is DELIBERATELY DIFFERENT from False so callers
     and dashboards can distinguish 'no signal' from 'verifier rejected'."""
 
-    verifier_grade: Optional[int] = None
+    verifier_grade: int | None = None
     """Numeric 1-5 grade from the verifier, or None if not graded."""
 
     verifier_reasoning: str = ""
@@ -161,7 +160,7 @@ async def spawn_subagent(
     role: str,
     brief: str,
     allowed_tools: list[str],
-    model: Optional[str] = None,
+    model: str | None = None,
     max_tool_calls: int = 10,
     max_tokens: int = 8000,
 ) -> SubagentResult:
@@ -267,7 +266,7 @@ async def spawn_subagent(
     # already lives in the parent's context, so when we restore it the
     # next spawn attempt will see fanout_used+1 correctly.
     parent_token = subagent_context.set(child_ctx)
-    result: Optional[SubagentResult] = None
+    result: SubagentResult | None = None
     try:
         result = await _run_child(
             agent=child_agent,
@@ -511,7 +510,7 @@ def _with_parent_session(ctx: SubagentContext, parent_session_id: str) -> Subage
 def _build_child_agent(
     *,
     allowed_tools: list[str],
-    model_name: Optional[str],
+    model_name: str | None,
     max_tool_calls: int,
     role: str,
 ):
@@ -531,7 +530,7 @@ def _build_child_agent(
     from langgraph.checkpoint.memory import MemorySaver
     from langgraph.prebuilt import create_react_agent
 
-    from app.agent.graph import _truncate_tool_output
+    from app.agent.agent_graph.nodes.tools import _truncate_tool_output
     from app.agent.model.factory import create_chat_model
     from app.config import settings
     from app.registry.tool_registry import resolve_tools
@@ -787,7 +786,7 @@ async def _run_child(
                 error=result.error,
             )
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         result = SubagentResult(
             child_session_id=child_session_id,
             role=role,

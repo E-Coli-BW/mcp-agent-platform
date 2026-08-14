@@ -16,11 +16,14 @@ These tests verify:
 """
 
 import json
-import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
-from unittest.mock import AsyncMock, patch, MagicMock
+import pytest
 from langchain_core.messages import AIMessage, ToolMessage
-from app.agent.graph_v2 import AgentState, make_error_tracking_node
+
+from app.agent.agent_graph.nodes.tools import make_error_tracking_node
+from app.agent.agent_graph.state import AgentState
 from app.tools.mcp_client import McpToolClient
 
 

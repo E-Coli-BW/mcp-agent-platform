@@ -48,8 +48,7 @@ def configure_logging():
 
     # Agent internals — the logs you want to see
     logging.getLogger("agent.chat").setLevel(agent_level)
-    logging.getLogger("app.agent.graph_v2").setLevel(agent_level)
-    logging.getLogger("app.agent.graph").setLevel(agent_level)
+    logging.getLogger("app.agent.agent_graph").setLevel(agent_level)
     logging.getLogger("app.tools").setLevel(agent_level)
 
     # Quiet down noisy libraries

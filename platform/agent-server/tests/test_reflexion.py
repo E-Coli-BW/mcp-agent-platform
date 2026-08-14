@@ -11,12 +11,12 @@ Run:
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.agent.graph_v2 import AgentState
+from app.agent.agent_graph.state import AgentState
 from app.agent.reflexion import (
     _find_last_assistant_answer,
     _find_last_user_question,

@@ -36,8 +36,8 @@ It is designed to be incremental and reversible for both runtimes:
 
 ## Model call sites
 
-- Python v1 path: `platform/agent-server/app/agent/graph.py` (`_create_chat_model`, state modifier)
-- Python v2 path: `platform/agent-server/app/agent/graph_v2.py` (`make_call_llm_node`)
+- Python Agent path: `platform/agent-server/app/agent/agent_graph/nodes/model.py`
+   (`make_call_llm_node`) with model construction in `app/agent/model/factory.py`.
 - Java main loop: `platform/agent-server-java/src/main/java/com/example/agent/agent/AgentLoopService.java`
 - Java subagent path: `platform/agent-server-java/src/main/java/com/example/agent/agent/SubagentSpawner.java`
 
@@ -204,8 +204,8 @@ Target SLO: reconstruction in <= 5 minutes via one query bundle.
    - attach to request context and pass through graph config
 2. `platform/agent-server/app/agent/prompts.py`
    - replace static getter path with `PromptResolver` adapter
-3. `platform/agent-server/app/agent/graph.py`
-4. `platform/agent-server/app/agent/graph_v2.py`
+3. `platform/agent-server/app/agent/model/factory.py`
+4. `platform/agent-server/app/agent/agent_graph/nodes/model.py`
    - emit provenance before/after each model call
 
 ### Adapter interfaces

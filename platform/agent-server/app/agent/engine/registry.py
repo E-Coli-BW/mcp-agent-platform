@@ -74,7 +74,6 @@ class LangGraphAgentRegistry:
         async with self._lock:
             await ensure_async_checkpointer()
             config = load_all_configs(settings.agent_config_dir).get(cache_key[0])
-            use_v2 = settings.agent_graph_version == "v2"
 
             if config is not None:
                 set_agent_contract(
@@ -87,7 +86,6 @@ class LangGraphAgentRegistry:
                     config,
                     current_tool_names,
                     temperature,
-                    use_v2,
                 )
                 return self._agents[cache_key]
 
@@ -104,7 +102,6 @@ class LangGraphAgentRegistry:
                 resolved_model,
                 current_tool_names,
                 temperature,
-                use_v2,
             )
             return self._agents[cache_key]
 
@@ -114,20 +111,14 @@ class LangGraphAgentRegistry:
         config: Any,
         current_tool_names: set[str],
         temperature: float | None,
-        use_v2: bool,
     ) -> None:
         cached_tools = self._tool_names.get(cache_key, set())
         if cache_key in self._agents and current_tool_names == cached_tools:
             return
         self._log_rebuild(cache_key, cached_tools, current_tool_names)
-        if use_v2:
-            from app.agent.agent_graph.factory import create_agent_v2_from_config
+        from app.agent.agent_graph.factory import create_agent_v2_from_config
 
-            agent = create_agent_v2_from_config(config, temperature=temperature)
-        else:
-            from app.agent.graph import create_agent_from_config
-
-            agent = create_agent_from_config(config, temperature=temperature)
+        agent = create_agent_v2_from_config(config, temperature=temperature)
         self._agents[cache_key] = agent
         self._tool_names[cache_key] = current_tool_names
 
@@ -137,20 +128,14 @@ class LangGraphAgentRegistry:
         resolved_model: str,
         current_tool_names: set[str],
         temperature: float | None,
-        use_v2: bool,
     ) -> None:
         cached_tools = self._tool_names.get(cache_key, set())
         if cache_key in self._agents and current_tool_names == cached_tools:
             return
         self._log_rebuild(cache_key, cached_tools, current_tool_names)
-        if use_v2:
-            from app.agent.agent_graph.factory import create_agent_v2
+        from app.agent.agent_graph.factory import create_agent_v2
 
-            agent = create_agent_v2(resolved_model, temperature=temperature)
-        else:
-            from app.agent.graph import create_agent
-
-            agent = create_agent(resolved_model, temperature=temperature)
+        agent = create_agent_v2(resolved_model, temperature=temperature)
         self._agents[cache_key] = agent
         self._tool_names[cache_key] = current_tool_names
 

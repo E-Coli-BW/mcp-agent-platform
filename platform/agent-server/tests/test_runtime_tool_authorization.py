@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.agent.graph_v2 import build_agent_graph
+from app.agent.agent_graph.builder import build_agent_graph
 from app.auth.middleware import tenant_context
 from app.context.request_context import set_request_context
 from app.runtime.approval import ApprovalRegistry
@@ -17,7 +17,6 @@ from app.runtime.tool_authorization import (
     reset_approval_notifier,
     set_approval_notifier,
 )
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
