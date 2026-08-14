@@ -179,6 +179,11 @@ AGENT_RERANK_STRATEGY=llm
 | `AGENT_CHEAP_MODEL` | `mlx/Qwen2.5-0.5B-Instruct-4bit` | Fast auxiliary model (grading, reranking) |
 | `AGENT_MLX_BASE_URL` | `http://localhost:8600` | MLX server URL (for `mlx/` models) |
 | `AGENT_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
+| `AGENT_MODEL_RETRY_MAX_RETRIES` | `2` | Same-step retries for transient model failures and empty responses |
+| `AGENT_MODEL_RETRY_INITIAL_DELAY_MS` | `500` | Initial exponential retry delay |
+| `AGENT_MODEL_RETRY_MAX_DELAY_MS` | `10000` | Retry delay ceiling, including `Retry-After` |
+| `AGENT_MODEL_RETRY_JITTER_RATIO` | `0.1` | Retry delay jitter ratio (0-1) |
+| `AGENT_RUNTIME_STORE_BACKEND` | `memory` | Set `sqlite` to enable crash-resumable model retry checkpoints |
 | `AGENT_REFLEXION_ENABLED` | `false` | Enable quality gate (adds 1 cheap_model call) |
 | `AGENT_REFLEXION_MIN_GRADE` | `3` | Min grade to pass (1-5 scale) |
 | `AGENT_RERANK_STRATEGY` | `auto` | `auto`, `llm`, `cross_encoder`, `heuristic`, `none` |
@@ -191,6 +196,24 @@ AGENT_RERANK_STRATEGY=llm
 | `AGENT_PROMPT_VERSION` | `v2` | System prompt version |
 | `AGENT_CONFIG_DIR` | `agents` | YAML agent config directory |
 | `AGENT_JWT_SECRET` | _(dev default)_ | **Set in production!** |
+
+### Model Retry Crash Recovery
+
+Set `AGENT_RUNTIME_STORE_BACKEND=sqlite` to persist both runtime retry state and
+the companion LangGraph thread checkpoint. A retryable model failure records its
+attempt count and backoff deadline before waiting.
+
+After a process restart:
+
+1. `GET /v1/runtime/recoverable` lists due, lease-expired retries owned by the
+  authenticated tenant.
+2. `POST /v1/runs/{run_id}/resume` atomically claims one retry and resumes the
+  pending LangGraph `call_llm` node without appending another user message.
+3. A crash during an in-flight provider request is never replayed automatically;
+  it becomes `reconciliation_required` because the provider outcome is unknown.
+
+The complete state and safety contract is documented in
+[`docs/MODEL_RETRY_CRASH_RECOVERY.md`](docs/MODEL_RETRY_CRASH_RECOVERY.md).
 
 ## Architecture
 

@@ -328,6 +328,7 @@ def _create_chat_model(
             api_key=settings.openai_api_key,
             temperature=temp,
             max_tokens=settings.max_tokens,
+            max_retries=0,
         )
 
     elif name.startswith("anthropic/") or name.startswith("claude"):
@@ -343,6 +344,7 @@ def _create_chat_model(
             base_url="https://api.anthropic.com/v1",
             temperature=temp,
             max_tokens=settings.max_tokens,
+            max_retries=0,
         )
 
     elif name.startswith("mlx/"):
@@ -362,6 +364,7 @@ def _create_chat_model(
             temperature=temp,
             max_tokens=settings.max_tokens,
             streaming=False,
+            max_retries=0,
         )
 
     else:

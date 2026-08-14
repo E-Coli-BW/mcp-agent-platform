@@ -320,6 +320,54 @@ async def stream_agent_response(
                         usage.completion_tokens += token_count
                         if active_model_call is not None:
                             active_model_call["completion_tokens"] += token_count
+                elif kind == "on_chat_model_error":
+                    if active_model_call is not None:
+                        duration_ms = int(
+                            (time.monotonic() - active_model_call["started_at"])
+                            * 1000
+                        )
+                        error = event.get("data", {}).get("error")
+                        error_class = type(error).__name__ if error is not None else "UnknownError"
+                        model_event = make_model_call_event(
+                            run_id=req_ctx.run_id,
+                            request_id=req_ctx.request_id,
+                            trace_id=current_trace_id(),
+                            tenant_id=tenant_id,
+                            session_id=session_id,
+                            runtime=runtime_name,
+                            call_site=f"chat._stream_agent_response.llm_call_{active_model_call['seq']}",
+                            provider=infer_provider(model),
+                            model=model,
+                            temperature=effective_temperature,
+                            max_tokens=max_tokens,
+                            prompt_id=prompt_resolution.prompt_id,
+                            prompt_version=prompt_resolution.version,
+                            prompt_hash=prompt_resolution.content_hash,
+                            feature_flags=flag_snapshot,
+                            prompt_tokens=active_model_call["prompt_tokens"],
+                            completion_tokens=active_model_call["completion_tokens"],
+                            duration_ms=duration_ms,
+                            status="error",
+                            error_class=error_class,
+                        )
+                        from app.events.kafka_producer import get_event_producer
+
+                        await get_event_producer().emit_model_call(model_event)
+                        await run_recorder.record_event(
+                            req_ctx.run_id,
+                            "model_call_completed",
+                            {
+                                "seq": active_model_call["seq"],
+                                "provider": infer_provider(model),
+                                "model": model,
+                                "prompt_tokens": active_model_call["prompt_tokens"],
+                                "completion_tokens": active_model_call["completion_tokens"],
+                                "duration_ms": duration_ms,
+                                "status": "error",
+                                "error_class": error_class,
+                            },
+                        )
+                        active_model_call = None
                 elif kind == "on_chat_model_end":
                     if active_model_call is not None:
                         duration_ms = int(
@@ -695,19 +743,34 @@ async def stream_agent_response(
                 },
             )
 
-        retryable = not isinstance(exc, (ValueError, PermissionError, KeyError))
-        await run_recorder.finish_run(
-            req_ctx.run_id,
-            RunStatus.FAILED,
-            {
-                "request_id": req_ctx.request_id,
-                "session_id": session_id,
-                "error_class": exc.__class__.__name__,
-                "error_message": str(exc),
-                "terminal_reason": "agent_error",
-                "retryable": retryable,
-            },
+        terminal_reason = getattr(exc, "terminal_reason", "agent_error")
+        retryable = bool(
+            getattr(
+                exc,
+                "retryable",
+                not isinstance(exc, (ValueError, PermissionError, KeyError)),
+            )
         )
+        failure_payload = {
+            "request_id": req_ctx.request_id,
+            "session_id": session_id,
+            "error_class": exc.__class__.__name__,
+            "error_message": str(exc),
+            "terminal_reason": terminal_reason,
+            "retryable": retryable,
+        }
+        if bool(getattr(exc, "preserve_run", False)):
+            await run_recorder.record_event(
+                req_ctx.run_id,
+                "run_ownership_transferred",
+                failure_payload,
+            )
+        else:
+            await run_recorder.finish_run(
+                req_ctx.run_id,
+                RunStatus.FAILED,
+                failure_payload,
+            )
         yield _make_chunk(
             f"\n\n❌ Agent error: {exc}",
             model,

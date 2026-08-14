@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.agent.fleet_bus import request_cancel as fleet_request_cancel
 from app.auth.middleware import AuthContext, require_auth, tenant_context
+from app.config import settings
 from app.context.request_context import set_request_context
 from app.runtime import RunStatus, get_idempotency_store, get_run_recorder
 from app.runtime.approval import get_approval_registry
@@ -85,6 +87,79 @@ async def resume_run(
     metadata = await get_run_recorder().get_metadata(run_id)
     if metadata is None or metadata["tenant_id"] != auth.tenant_id:
         raise HTTPException(status_code=403, detail="run does not belong to this tenant")
+    if checkpoint.state == "model_retry_waiting":
+        resume_at = float(checkpoint.payload.get("resume_at", 0))
+        if resume_at > time.time():
+            return {
+                "accepted": False,
+                "reason": "model retry backoff is still pending",
+                "retry_after_ms": max(0, int((resume_at - time.time()) * 1000)),
+                "checkpoint": checkpoint.to_dict(),
+            }
+        claimed = store.claim(
+            run_id,
+            owner=f"api:{auth.user_id}",
+            lease_seconds=max(60, settings.llm_timeout + 30),
+            expected_state="model_retry_waiting",
+        )
+        if claimed is None:
+            return {"accepted": False, "reason": "lease held", "checkpoint": checkpoint.to_dict()}
+        executing = store.transition(run_id, state="model_retry_executing")
+        if executing is None:
+            raise HTTPException(status_code=409, detail="retry checkpoint disappeared")
+        from app.runtime.model_retry_recovery import resume_model_retry_run
+
+        try:
+            resumed = await resume_model_retry_run(
+                run_id=run_id,
+                checkpoint=executing,
+                metadata=metadata,
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+                store=store,
+            )
+        except Exception as error:  # noqa: BLE001 - resume failures are returned as checkpoint state
+            return {
+                "accepted": False,
+                "reason": str(error),
+                "checkpoint": store.get(run_id).to_dict(),
+            }
+        return {
+            "accepted": True,
+            "response": resumed.response,
+            "checkpoint": resumed.checkpoint.to_dict(),
+        }
+
+    if checkpoint.state == "model_retry_executing":
+        claimed = store.claim(
+            run_id,
+            owner=f"reconcile:{auth.user_id}",
+            expected_state="model_retry_executing",
+        )
+        if claimed is None:
+            return {"accepted": False, "reason": "lease held", "checkpoint": checkpoint.to_dict()}
+        reconciled = store.transition(
+            run_id,
+            state="reconciliation_required",
+            payload={"reason": "provider outcome is unknown after process crash"},
+            clear_lease=True,
+        )
+        await get_run_recorder().finish_run(
+            run_id,
+            RunStatus.FAILED,
+            {
+                "request_id": f"reconcile-{run_id}",
+                "session_id": metadata["session_id"],
+                "terminal_reason": "model_outcome_unknown",
+                "retryable": False,
+            },
+        )
+        return {
+            "accepted": False,
+            "reason": "provider outcome is unknown; manual reconciliation required",
+            "checkpoint": reconciled.to_dict(),
+        }
+
     if checkpoint.state != "approved":
         reason = (
             "executing outcome requires reconciliation"

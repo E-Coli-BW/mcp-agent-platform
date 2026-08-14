@@ -14,10 +14,12 @@ from langgraph.graph import END, START, StateGraph
 from app.agent.compressor import InvestigationState, estimate_chars
 from app.agent.graph_v2 import (
     AgentState,
+    AgentTerminationError,
     ContextBudgetExceededError,
     _build_llm_messages,
     _build_llm_view,
     _deduplicate_tool_calls,
+    _format_tool_error,
     build_agent_graph,
     inject_context_node,
     make_error_tracking_node,
@@ -29,7 +31,6 @@ from app.agent.graph_v2 import (
     update_investigation_node,
 )
 from app.artifacts import ArtifactRegistry, VerifiedArtifact
-
 
 # ── AgentState ────────────────────────────────────────────────
 
@@ -90,6 +91,20 @@ def test_deduplicate_tool_calls_preserves_different_arguments():
     assert _deduplicate_tool_calls(response) is response
 
 
+def test_format_tool_error_classifies_ordinary_error():
+    assert _format_tool_error(RuntimeError("boom")) == (
+        "Error [TOOL_ERROR]: RuntimeError: boom"
+    )
+
+
+def test_format_tool_error_classifies_and_bounds_timeout():
+    content = _format_tool_error(TimeoutError("x" * 3000))
+
+    assert content.startswith("Error [TOOL_TIMEOUT]: TimeoutError:")
+    assert len(content) < 2100
+    assert content.endswith("... (truncated)")
+
+
 def test_reset_turn_state_preserves_checkpointed_context():
     state = AgentState(
         messages=[HumanMessage(content="continue the investigation")],
@@ -128,9 +143,11 @@ async def test_inject_context_skips_if_already_set():
 @pytest.mark.asyncio
 async def test_inject_context_fetches_workspace():
     state = AgentState(skills_catalog="already")  # short-circuit skills fetch
-    with patch("app.context.workspace.get_workspace_context", return_value="Python project"):
-        with patch("app.tools.agent_mode.get_workspace_root", return_value="/tmp"):
-            result = await inject_context_node(state)
+    with (
+        patch("app.context.workspace.get_workspace_context", return_value="Python project"),
+        patch("app.tools.agent_mode.get_workspace_root", return_value="/tmp"),
+    ):
+        result = await inject_context_node(state)
     assert "workspace_context" in result
 
 
@@ -487,7 +504,9 @@ def test_route_to_end_when_max_steps():
         ],
         loop_counter=5,
     )
-    assert route(state) == "__end__"
+    with pytest.raises(AgentTerminationError) as error:
+        route(state)
+    assert error.value.terminal_reason == "max_steps_exceeded"
 
 
 def test_route_to_end_when_too_many_errors():
@@ -502,7 +521,9 @@ def test_route_to_end_when_too_many_errors():
         loop_counter=1,
         consecutive_errors=4,
     )
-    assert route(state) == "__end__"
+    with pytest.raises(AgentTerminationError) as error:
+        route(state)
+    assert error.value.terminal_reason == "consecutive_tool_errors_exceeded"
 
 
 # ── track_errors ──────────────────────────────────────────────

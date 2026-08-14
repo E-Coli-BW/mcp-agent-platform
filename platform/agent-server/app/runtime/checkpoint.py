@@ -1,5 +1,6 @@
 """Durable, serializable runtime checkpoints for resumable runs."""
 from __future__ import annotations
+
 import json
 import sqlite3
 import time
@@ -15,10 +16,20 @@ _ALLOWED_TRANSITIONS = {
     "waiting_approval": {"approved", "rejected", "failed"},
     "approved": {"executing", "completed", "failed"},
     "executing": {"completed", "failed"},
+    "model_retry_waiting": {"model_retry_executing", "failed"},
+    "model_retry_executing": {
+        "model_retry_waiting",
+        "completed",
+        "failed",
+        "reconciliation_required",
+    },
     "completed": set(),
     "failed": set(),
     "rejected": set(),
+    "reconciliation_required": set(),
 }
+
+_TERMINAL_STATES = {"completed", "failed", "rejected", "reconciliation_required"}
 
 
 @dataclass(frozen=True)
@@ -68,7 +79,7 @@ class SQLiteCheckpointStore:
                 step_seq = 1
             else:
                 previous_step, previous_state = row
-                if previous_state not in {"completed", "failed", "rejected"}:
+                if previous_state not in _TERMINAL_STATES:
                     raise InvalidCheckpointTransition(
                         f"cannot start next checkpoint while step is {previous_state}"
                     )
@@ -99,16 +110,52 @@ class SQLiteCheckpointStore:
                 return None
         return self.get(run_id)
 
+    def renew_lease(self, run_id: str, *, owner: str, lease_seconds: int = 60) -> RunCheckpoint | None:
+        """Extend a live owner's lease without allowing another owner to steal it."""
+        now = time.time()
+        with sqlite3.connect(self.database_path) as conn:
+            result = conn.execute(
+                """UPDATE agent_run_checkpoints
+                SET lease_expires_at = ?, updated_at = ?
+                WHERE run_id = ? AND lease_owner = ? AND lease_expires_at >= ?""",
+                (now + lease_seconds, now, run_id, owner, now),
+            )
+            if result.rowcount != 1:
+                return None
+        return self.get(run_id)
+
     def list_recoverable(self) -> list[RunCheckpoint]:
         now = time.time()
         with sqlite3.connect(self.database_path) as conn:
             rows = conn.execute("""SELECT * FROM agent_run_checkpoints
-                WHERE state IN ('waiting_approval', 'approved', 'executing')
+                WHERE state IN (
+                    'waiting_approval', 'approved', 'executing',
+                    'model_retry_waiting', 'model_retry_executing'
+                )
                 AND (lease_expires_at IS NULL OR lease_expires_at < ?)
                 ORDER BY updated_at ASC""", (now,)).fetchall()
-        return [RunCheckpoint(row[0], row[1], row[2], row[3], row[4], json.loads(row[5]), row[6], row[7], row[8]) for row in rows]
+        checkpoints = [
+            RunCheckpoint(
+                row[0], row[1], row[2], row[3], row[4],
+                json.loads(row[5]), row[6], row[7], row[8],
+            )
+            for row in rows
+        ]
+        return [
+            checkpoint
+            for checkpoint in checkpoints
+            if checkpoint.state != "model_retry_waiting"
+            or float(checkpoint.payload.get("resume_at", 0)) <= now
+        ]
 
-    def transition(self, run_id: str, *, state: str, payload: dict | None = None) -> RunCheckpoint | None:
+    def transition(
+        self,
+        run_id: str,
+        *,
+        state: str,
+        payload: dict | None = None,
+        clear_lease: bool = False,
+    ) -> RunCheckpoint | None:
         with sqlite3.connect(self.database_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -127,9 +174,10 @@ class SQLiteCheckpointStore:
             merged = json.loads(payload_json)
             merged.update(payload or {})
             now = time.time()
+            lease_update = ", lease_owner = NULL, lease_expires_at = NULL" if clear_lease else ""
             result = conn.execute(
-                """UPDATE agent_run_checkpoints
-                SET state = ?, payload_json = ?, updated_at = ?
+                f"""UPDATE agent_run_checkpoints
+                SET state = ?, payload_json = ?, updated_at = ?{lease_update}
                 WHERE run_id = ? AND state = ?""",
                 (state, json.dumps(merged), now, run_id, current_state),
             )

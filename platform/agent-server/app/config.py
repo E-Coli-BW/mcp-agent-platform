@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # NOTE: changing this restarts every cached agent (cache key includes
     # the temperature) — see graph.py::get_agent.
     default_temperature: float = 0.7
+    model_retry_max_retries: int = 2
+    model_retry_initial_delay_ms: int = 500
+    model_retry_max_delay_ms: int = 10_000
+    model_retry_jitter_ratio: float = 0.1
     max_tool_output: int = 3000  # truncate tool results to save context window
     max_context_chars: int = 20_000  # ~5K tokens history budget for prompt modifier
     prompt_version: str = "v2"

@@ -15,8 +15,9 @@ Architecture:
 import asyncio
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Sequence
+from typing import Annotated, Any, Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -27,6 +28,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.tools import BaseTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -37,6 +39,7 @@ from app.agent.compressor import (
     compress_messages,
     update_investigation_from_messages,
 )
+from app.agent.model_recovery import invoke_with_model_retry, policy_from_settings
 from app.agent.prompts import get_system_prompt
 from app.agent.reflexion import make_maybe_critique_node
 from app.agent.tool_router import (
@@ -145,7 +148,7 @@ async def inject_context_node(state: AgentState) -> dict[str, Any]:
             root = get_workspace_root()
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, get_workspace_context, root)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - workspace context is best effort
             logger.debug("Workspace context unavailable: %s", e)
             return ""
 
@@ -156,7 +159,7 @@ async def inject_context_node(state: AgentState) -> dict[str, Any]:
 
             tenant_id = tenant_context.get() or "default"
             return await build_skill_catalog_block(tenant_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - skills context is best effort
             logger.debug("Skills catalog unavailable: %s", e)
             return ""
 
@@ -195,6 +198,31 @@ class LlmMessageView:
 
 class ContextBudgetExceededError(RuntimeError):
     """Raised when the required prompt floor cannot fit the configured budget."""
+
+
+class AgentTerminationError(RuntimeError):
+    """A bounded loop ended without a valid completed assistant response."""
+
+    retryable = False
+
+    def __init__(self, terminal_reason: str, message: str):
+        self.terminal_reason = terminal_reason
+        super().__init__(message)
+
+
+def _format_tool_error(error: Exception) -> str:
+    """Convert ordinary tool failures into bounded model-visible results."""
+    import subprocess
+
+    code = (
+        "TOOL_TIMEOUT"
+        if isinstance(error, (TimeoutError, asyncio.TimeoutError, subprocess.TimeoutExpired))
+        else "TOOL_ERROR"
+    )
+    detail = str(error).strip() or type(error).__name__
+    if len(detail) > 2000:
+        detail = detail[:2000] + "... (truncated)"
+    return f"Error [{code}]: {type(error).__name__}: {detail}"
 
 
 def reset_turn_state_node(state: AgentState) -> dict[str, Any]:
@@ -354,6 +382,9 @@ def make_call_llm_node(model: BaseChatModel, tools: list[BaseTool], system_promp
     """
     # Bind tools once — this converts our tool schemas to the provider's format
     model_with_tools = model.bind_tools(tools) if tools else model
+    request_identity = {
+        "tools": [convert_to_openai_tool(tool) for tool in tools],
+    }
 
     async def call_llm_node(state: AgentState) -> dict[str, Any]:
         view = _build_llm_view(state, system_prompt)
@@ -378,7 +409,14 @@ def make_call_llm_node(model: BaseChatModel, tools: list[BaseTool], system_promp
 
         import time
         t0 = time.monotonic()
-        response = _deduplicate_tool_calls(await model_with_tools.ainvoke(messages))
+        response = _deduplicate_tool_calls(
+            await invoke_with_model_retry(
+                model_with_tools,
+                messages,
+                policy=policy_from_settings(settings),
+                request_identity=request_identity,
+            )
+        )
         elapsed_ms = int((time.monotonic() - t0) * 1000)
 
         # Log what the LLM decided
@@ -450,12 +488,18 @@ def make_route_node(max_steps: int, available_tools: set[str] | None = None):
         # Max steps guard
         if state.loop_counter >= max_steps:
             logger.warning("🛑 Agent hit max steps (%d/%d), forcing end", state.loop_counter, max_steps)
-            return "__end__"
+            raise AgentTerminationError(
+                "max_steps_exceeded",
+                f"agent exhausted its {max_steps}-step budget",
+            )
 
         # Too many consecutive errors — stop to avoid infinite loop
         if state.consecutive_errors > 3:
             logger.warning("🛑 Agent hit max consecutive errors (%d), forcing end", state.consecutive_errors)
-            return "__end__"
+            raise AgentTerminationError(
+                "consecutive_tool_errors_exceeded",
+                f"agent stopped after {state.consecutive_errors} consecutive tool errors",
+            )
 
         last = state.messages[-1] if state.messages else None
 
@@ -504,7 +548,10 @@ def make_route_node(max_steps: int, available_tools: set[str] | None = None):
                     logger.error(
                         "🛑 Model repeated an explicit fake tool call after correction; stopping run"
                     )
-                    return "__end__"
+                    raise AgentTerminationError(
+                        "tool_protocol_error",
+                        "model repeated an explicit fake tool call after correction",
+                    )
                 logger.warning(
                     "🚨 Hallucinated tool use detected (mentioned %s, unfinished_action=%s). "
                     "Injecting correction [loop=%d].",
@@ -709,7 +756,10 @@ def build_agent_graph(
     graph.add_node("intent_router", make_intent_router_node(execution_tools))
     graph.add_node("call_llm", make_call_llm_node(model, execution_tools, system_prompt))
     graph.add_node("maybe_critique", make_maybe_critique_node())
-    graph.add_node("tools", ToolNode(execution_tools))
+    graph.add_node(
+        "tools",
+        ToolNode(execution_tools, handle_tool_errors=_format_tool_error),
+    )
     graph.add_node("track_errors", make_error_tracking_node())
     graph.add_node("update_investigation_initial", update_investigation_node)
     graph.add_node("update_investigation_tools", update_investigation_node)
@@ -777,9 +827,9 @@ def create_agent_v2_from_config(config, temperature: float | None = None):
     `temperature` forwarded to `_create_chat_model`. None ⇒ default from settings.
     """
     from app.agent.graph import _create_chat_model, _get_checkpointer
-    from app.registry.tool_registry import resolve_tools
-    from app.context.request_context import set_agent_contract
     from app.agent.runtime_profile import resolve_runtime_profile
+    from app.context.request_context import set_agent_contract
+    from app.registry.tool_registry import resolve_tools
 
     set_agent_contract(config.id, config.knowledge.get("collection", ""))
 
