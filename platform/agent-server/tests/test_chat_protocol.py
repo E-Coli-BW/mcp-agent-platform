@@ -1,6 +1,6 @@
 """Regression tests for chat stream and thread continuity contracts."""
 
-import inspect
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,22 +11,32 @@ from app.api.chat import (
     ChatRequest,
     _FinalResponseBuffer,
     _make_chunk,
-    _stream_agent_response,
     _ToolEventTracker,
     _verified_artifact_answer_from_chain_event,
     chat_completions,
 )
 from app.auth.middleware import AuthContext
-from app.context.request_context import set_request_context
+from app.runtime.events import RuntimeStreamEvent
 
 
 def test_tool_execution_uses_named_sse_only():
-    source = inspect.getsource(_stream_agent_response)
+    from app.api.openai_sse import project_runtime_event
 
-    assert "yield _make_tool_event(" in source
-    assert "<!-- TOOL:" not in source
-    assert "yield _make_chunk(chunk.content" not in source
-    assert "yield _make_chunk(full_response, model)" in source
+    projected = project_runtime_event(
+        RuntimeStreamEvent(
+            "tool_start",
+            {
+                "tool": "file_read",
+                "data": {"input": {"path": "README.md"}},
+                "seq": 1,
+            },
+            event_id="run-1:2",
+        )
+    )
+
+    assert projected["event"] == "tool_start"
+    assert projected["id"] == "run-1:2"
+    assert "<!-- TOOL:" not in projected["data"]
 
 
 def test_final_response_buffer_discards_rejected_draft():
@@ -125,79 +135,35 @@ async def test_follow_up_keeps_client_session_id():
 
 
 @pytest.mark.asyncio
-async def test_session_lane_timeout_finishes_run(monkeypatch):
+async def test_chat_stream_projects_coordinator_events(monkeypatch):
     from app.runtime import chat_stream
-    from app.runtime.cancellation import RunCancellationRegistry
-    from app.runtime.recorder import InMemoryRunRecorder, RunStatus
+    requests = []
 
-    class FakePromptResolution:
-        version = "v2"
-        content_hash = "sha256:test"
-
-    class FakeConversationStore:
-        async def append(self, session_id, message):
-            return None
-
-    class FakeAgentEngine:
+    class FakeCoordinator:
         async def stream_turn(self, request):
-            async def events():
-                if False:
-                    yield {}
+            requests.append(request)
+            yield RuntimeStreamEvent(
+                "content",
+                {"content": "ok", "model": request.model},
+            )
+            yield RuntimeStreamEvent("done")
 
-            return events()
-
-    async def lock_is_held(session_id):
-        return True
-
-    async def lock_times_out(session_id, **kwargs):
-        return False
-
-    recorder = InMemoryRunRecorder()
-    cancellation = RunCancellationRegistry()
-    set_request_context("request-lane-timeout", "run-lane-timeout", "tenant:session")
-    monkeypatch.setattr(
-        chat_stream,
-        "resolve_system_prompt",
-        lambda **kwargs: FakePromptResolution(),
-    )
-    monkeypatch.setattr(
-        chat_stream,
-        "get_agent_engine",
-        lambda: FakeAgentEngine(),
-    )
-    monkeypatch.setattr(
-        chat_stream,
-        "get_conversation_store",
-        lambda: FakeConversationStore(),
-    )
-    monkeypatch.setattr(chat_stream, "get_run_recorder", lambda: recorder)
-    monkeypatch.setattr(
-        chat_stream,
-        "get_run_cancellation_registry",
-        lambda: cancellation,
-    )
-    monkeypatch.setattr(
-        "app.middleware.session_lane.session_lock_held",
-        lock_is_held,
-    )
-    monkeypatch.setattr(
-        "app.middleware.session_lane.wait_for_session_lock",
-        lock_times_out,
-    )
+    monkeypatch.setattr(chat_stream, "get_run_coordinator", FakeCoordinator)
 
     events = [
         event
         async for event in chat_stream.stream_agent_response(
-            [ChatMessage(role="user", content="queued request")],
+            [ChatMessage(role="user", content="inspect the failure")],
             "coding-agent",
             "tenant:session",
             "tenant",
+            temperature=0.0,
+            prompt_version="v2",
         )
     ]
 
-    metadata = await recorder.get_metadata("run-lane-timeout")
-    assert metadata is not None
-    assert metadata["status"] == RunStatus.FAILED.value
-    assert metadata["terminal_reason"] == "session_lane_timeout"
-    assert metadata["retryable"] is True
+    assert requests[0].user_input == "inspect the failure"
+    assert requests[0].temperature == 0.0
+    assert requests[0].prompt_version == "v2"
+    assert json.loads(events[0])["choices"][0]["delta"]["content"] == "ok"
     assert events[-1] == "[DONE]"

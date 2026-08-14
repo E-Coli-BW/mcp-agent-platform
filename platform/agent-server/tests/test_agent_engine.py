@@ -35,6 +35,32 @@ def test_platform_layers_do_not_import_concrete_agent_graphs():
     assert violations == []
 
 
+def test_run_coordinator_has_no_wire_or_optional_observer_imports():
+    app_dir = Path(__file__).parents[1] / "app"
+    runner_path = app_dir / "runtime" / "runner.py"
+    tree = ast.parse(runner_path.read_text())
+    imported_modules = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_modules.append(node.module)
+
+    forbidden = (
+        "fastapi",
+        "app.api.openai_sse",
+        "app.events.kafka_producer",
+        "app.rag",
+        "app.feedback",
+        "app.usage",
+    )
+    assert not [
+        module
+        for module in imported_modules
+        if any(module == prefix or module.startswith(f"{prefix}.") for prefix in forbidden)
+    ]
+
+
 class FakeLangGraphAgent:
     def __init__(self) -> None:
         self.stream_state = None

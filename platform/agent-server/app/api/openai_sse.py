@@ -7,6 +7,26 @@ import time
 import uuid
 from typing import Any
 
+from app.runtime.agent_output import (
+    FinalResponseBuffer,
+    ToolEventTracker,
+    is_actor_model_event,
+    verified_artifact_answer_from_chain_event,
+)
+from app.runtime.events import RuntimeStreamEvent
+
+__all__ = [
+    "FinalResponseBuffer",
+    "ToolEventTracker",
+    "is_actor_model_event",
+    "make_child_event",
+    "make_chunk",
+    "make_status_event",
+    "make_tool_event",
+    "project_runtime_event",
+    "verified_artifact_answer_from_chain_event",
+]
+
 
 def make_chunk(content: str, model: str, finish_reason: str | None = None) -> str:
     """Format a single OpenAI-compatible content chunk."""
@@ -55,72 +75,6 @@ def make_status_event(
     return event
 
 
-class ToolEventTracker:
-    """Expose one lifecycle for each outer tool run, hiding nested wrappers."""
-
-    def __init__(self) -> None:
-        self._next_seq = 0
-        self._visible_runs: dict[str, int] = {}
-
-    @property
-    def count(self) -> int:
-        return self._next_seq
-
-    def start(self, event: dict[str, Any]) -> int | None:
-        run_id = str(event.get("run_id", ""))
-        parent_ids = {str(parent_id) for parent_id in event.get("parent_ids", [])}
-        if any(parent_id in self._visible_runs for parent_id in parent_ids):
-            return None
-        self._next_seq += 1
-        if run_id:
-            self._visible_runs[run_id] = self._next_seq
-        return self._next_seq
-
-    def end(self, event: dict[str, Any]) -> int | None:
-        run_id = str(event.get("run_id", ""))
-        if not run_id:
-            return self._next_seq or None
-        return self._visible_runs.pop(run_id, None)
-
-
-class FinalResponseBuffer:
-    """Retain only the latest actor-model response candidate."""
-
-    def __init__(self) -> None:
-        self._parts: list[str] = []
-
-    def start_call(self) -> None:
-        self._parts = []
-
-    def append(self, content: str) -> None:
-        self._parts.append(content)
-
-    @property
-    def text(self) -> str:
-        return "".join(self._parts)
-
-
-def is_actor_model_event(event: dict[str, Any]) -> bool:
-    node = event.get("metadata", {}).get("langgraph_node")
-    return node in (None, "call_llm")
-
-
-def verified_artifact_answer_from_chain_event(event: dict[str, Any]) -> str | None:
-    """Return a rendered plugin artifact from a graph node completion event."""
-    if event.get("event") != "on_chain_end":
-        return None
-    output = event.get("data", {}).get("output")
-    messages = output.get("messages", []) if isinstance(output, dict) else getattr(output, "messages", [])
-    if not isinstance(messages, (list, tuple)):
-        messages = [messages]
-    for message in reversed(messages):
-        additional_kwargs = getattr(message, "additional_kwargs", {})
-        if isinstance(additional_kwargs.get("verified_artifact"), dict):
-            content = getattr(message, "content", "")
-            return content if isinstance(content, str) else str(content)
-    return None
-
-
 def make_child_event(bus_event: dict[str, Any]) -> dict[str, str]:
     """Convert a fleet-bus event into a named browser SSE event."""
     return {
@@ -137,3 +91,40 @@ def make_child_event(bus_event: dict[str, Any]) -> dict[str, str]:
             }
         ),
     }
+
+
+def project_runtime_event(event: RuntimeStreamEvent) -> str | dict[str, str]:
+    """Project one transport-neutral runtime event onto the OpenAI SSE wire."""
+    payload = event.payload
+    if event.kind == "status":
+        return make_status_event(
+            str(payload["state"]),
+            event_id=event.event_id,
+            **{key: value for key, value in payload.items() if key != "state"},
+        )
+    if event.kind in ("tool_start", "tool_end"):
+        return make_tool_event(
+            event.kind.removeprefix("tool_"),
+            str(payload["tool"]),
+            dict(payload["data"]),
+            seq=int(payload["seq"]),
+            event_id=event.event_id,
+        )
+    if event.kind == "approval_required":
+        return {
+            "event": "approval_required",
+            "data": json.dumps(payload["approval"].to_dict()),
+        }
+    if event.kind == "child_event":
+        return make_child_event(dict(payload["event"]))
+    if event.kind == "content":
+        return make_chunk(
+            str(payload.get("content", "")),
+            str(payload["model"]),
+            finish_reason=payload.get("finish_reason"),
+        )
+    if event.kind == "keepalive":
+        return ": keepalive\n"
+    if event.kind == "done":
+        return "[DONE]"
+    raise ValueError(f"unsupported runtime event kind: {event.kind}")

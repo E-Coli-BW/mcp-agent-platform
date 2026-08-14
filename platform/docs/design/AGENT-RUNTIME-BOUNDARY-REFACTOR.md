@@ -1,6 +1,6 @@
 # Agent Runtime Boundary Refactor
 
-> Status: accepted migration contract, Phase 1 complete; Phase 2 not started.
+> Status: accepted migration contract, Phases 1-2 complete; Phase 3 not started.
 > Created: 2026-08-14.
 > Scope owner: `platform/agent-server`.
 >
@@ -213,6 +213,8 @@ Status: complete (2026-08-14).
 
 ## Phase 2 - Separate platform runner from observers and wire adapters
 
+Status: complete (2026-08-14).
+
 ### Scope
 
 - Introduce a platform `RunCoordinator` around `AgentEngine`.
@@ -225,6 +227,19 @@ Status: complete (2026-08-14).
 - Core turn orchestration can run without FastAPI, SSE, Kafka, or RAG feedback.
 - Observer failures cannot alter Agent execution outcome.
 - `chat_stream.py` contains only composition and compatibility exports.
+
+### Completion record
+
+- Added a transport-neutral `RunCoordinator` and `RuntimeStreamEvent` contract.
+- Reduced `chat_stream.py` to request adaptation and OpenAI event projection.
+- Extracted usage, model provenance, Kafka, and retrieval feedback into isolated
+  runtime observers.
+- Kept default observer wiring in `runtime/composition.py`; importing the runner
+  alone does not load FastAPI, SSE, Kafka, RAG, feedback, or usage modules.
+- Added observer-failure, coordinator lifecycle, wire projection, and dependency
+  regression tests.
+- Full Agent Server suite: 605 passed, 1 skipped.
+- Phase 2 touched-file Ruff and `git diff --check`: passed.
 
 ## Phase 3 - Consolidate graph/model/checkpoint ownership
 
