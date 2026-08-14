@@ -191,13 +191,12 @@ def _get_verifier(injected: Optional[BaseChatModel]) -> BaseChatModel:
     builds from settings.subagent_verifier_model or cheap_model."""
     if injected is not None:
         return injected
-    # Lazy import: graph.py pulls in langchain providers and is heavy.
-    from app.agent.graph import _create_chat_model
+    from app.agent.model.factory import create_chat_model
 
     name = settings.subagent_verifier_model or settings.cheap_model
     if name not in _verifier_cache:
         # T=0 so grades are reproducible across identical inputs.
-        _verifier_cache[name] = _create_chat_model(name, temperature=0.0)
+        _verifier_cache[name] = create_chat_model(name, temperature=0.0)
     return _verifier_cache[name]
 
 

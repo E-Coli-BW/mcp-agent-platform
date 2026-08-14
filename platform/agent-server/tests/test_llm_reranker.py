@@ -1,18 +1,17 @@
 """Unit tests for app.rag.reranking.llm.
 
-These tests do NOT call a real LLM. They mock `_create_chat_model` and exercise
+These tests do NOT call a real LLM. They mock `create_chat_model` and exercise
 the prompt construction, output parsing, and graceful-degradation paths.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 
 import pytest
 
-from app.rag.reranking.llm import _build_user_prompt, _parse_indices, llm_rerank
 from app.rag.index.retriever import ScoredChunk
+from app.rag.reranking.llm import _build_user_prompt, _parse_indices, llm_rerank
 
 
 def _chunk(name: str, content: str = "body", score: float = 0.5) -> ScoredChunk:
@@ -119,14 +118,14 @@ def patch_model(monkeypatch):
     """Returns a helper that swaps the model factory for a given fake."""
 
     def _patch(fake):
-        import app.agent.graph as graph_mod
+        import app.agent.model.factory as model_factory
 
         # Mock signature must accept the new `temperature` kwarg that
         # callers now pass through (latent bug D fix). Defaults None for
         # back-compat with any call site that doesn't supply it.
         monkeypatch.setattr(
-            graph_mod,
-            "_create_chat_model",
+            model_factory,
+            "create_chat_model",
             lambda name=None, temperature=None: fake,
         )
 

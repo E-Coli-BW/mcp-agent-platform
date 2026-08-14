@@ -175,9 +175,9 @@ async def llm_rerank(
     timeout = timeout if timeout is not None else settings.rerank_timeout_seconds
 
     try:
-        from app.agent.graph import _create_chat_model
+        from app.agent.model.factory import create_chat_model
 
-        model = _create_chat_model(model_name)
+        model = create_chat_model(model_name)
     except Exception as e:
         logger.warning("LLM reranker unavailable (model init failed: %s); falling back", e)
         return chunks[:top_k]

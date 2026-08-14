@@ -170,7 +170,7 @@ def test_build_llm_messages_enforces_char_budget():
     # Create messages that exceed budget
     long_msgs = [HumanMessage(id=f"message-{index}", content="x" * 1000) for index in range(20)]
     state = AgentState(messages=long_msgs)
-    with patch("app.agent.graph_v2.settings") as mock_settings:
+    with patch("app.agent.agent_graph.nodes.context.settings") as mock_settings:
         mock_settings.max_context_chars = 10000
         msgs = _build_llm_messages(state, "system")
     assert estimate_chars(msgs) <= 10000
@@ -182,7 +182,7 @@ def test_build_llm_view_budgets_system_workspace_and_skills():
         workspace_context="w" * 6000,
         skills_catalog="s" * 3000,
     )
-    with patch("app.agent.graph_v2.settings") as mock_settings:
+    with patch("app.agent.agent_graph.nodes.context.settings") as mock_settings:
         mock_settings.max_context_chars = 5000
         view = _build_llm_view(state, "system")
 
@@ -193,7 +193,7 @@ def test_build_llm_view_budgets_system_workspace_and_skills():
 
 def test_build_llm_messages_raises_when_required_floor_exceeds_budget():
     state = AgentState(messages=[HumanMessage(content="x" * 5000)])
-    with patch("app.agent.graph_v2.settings") as mock_settings:
+    with patch("app.agent.agent_graph.nodes.context.settings") as mock_settings:
         mock_settings.max_context_chars = 1000
         with pytest.raises(ContextBudgetExceededError):
             _build_llm_messages(state, "system")
@@ -207,7 +207,7 @@ def test_build_llm_view_injects_structured_investigation_facts():
         messages=messages,
         investigation=InvestigationState(confirmed_facts=["root cause confirmed"]),
     )
-    with patch("app.agent.graph_v2.settings") as mock_settings:
+    with patch("app.agent.agent_graph.nodes.context.settings") as mock_settings:
         mock_settings.max_context_chars = 1200
         view = _build_llm_view(state, "system")
 
@@ -235,7 +235,7 @@ def test_build_llm_messages_compresses_old_tool_messages():
         )
 
     state = AgentState(messages=messages)
-    with patch("app.agent.graph_v2.settings") as mock_settings:
+    with patch("app.agent.agent_graph.nodes.context.settings") as mock_settings:
         mock_settings.max_context_chars = 12000
         msgs = _build_llm_messages(state, "system")
     model_tool_messages = [message for message in msgs if isinstance(message, ToolMessage)]

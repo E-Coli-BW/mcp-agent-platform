@@ -1,6 +1,6 @@
 # Agent Runtime Boundary Refactor
 
-> Status: accepted migration contract, Phases 1-2 complete; Phase 3 not started.
+> Status: accepted migration contract, Phases 1-3 complete; Phase 4 not started.
 > Created: 2026-08-14.
 > Scope owner: `platform/agent-server`.
 >
@@ -125,7 +125,7 @@ app/agent/engine/
   langgraph.py       # only LangGraph-specific implementation
   __init__.py        # stable get_agent_engine() composition seam
 
-app/agent/graph/
+app/agent/agent_graph/
   state.py           # AgentState and investigation state integration
   nodes/             # context, model, tools, verification nodes
   routing.py         # typed route decisions and terminal reasons
@@ -150,6 +150,11 @@ app/api/
 
 This map is directional. Modules are created only in the phase that owns them;
 empty abstractions must not be added in advance.
+
+`agent_graph/` is intentionally distinct from the public `graph.py` module.
+Python cannot safely host a `graph.py` compatibility facade and a `graph/`
+package behind the same import name during migration. The distinct internal
+name keeps legacy imports deterministic until Phase 4 removes the facade.
 
 ## 6. Dependency Rules
 
@@ -243,6 +248,8 @@ Status: complete (2026-08-14).
 
 ## Phase 3 - Consolidate graph/model/checkpoint ownership
 
+Status: complete (2026-08-14).
+
 ### Scope
 
 - Move provider construction to `app/agent/model/factory.py`.
@@ -256,6 +263,24 @@ Status: complete (2026-08-14).
 - `graph_v2.py` is removed or reduced to a compatibility export module.
 - Every new graph module has one reason to change.
 - No circular import between engine, graph, model, and checkpointing.
+
+### Completion record
+
+- Moved provider construction and fallback/circuit-breaker ownership to
+  `app/agent/model/`; the legacy fallback module is a compatibility facade.
+- Moved LangGraph checkpointer selection and lifecycle to
+  `app/agent/checkpointing.py`, separate from durable runtime checkpoints.
+- Split v2 state, context/model/tool/verification nodes, routing, topology, and
+  Agent-definition construction under `app/agent/agent_graph/`.
+- Reduced `graph_v2.py` to compatibility exports and removed the former
+  `graph.py`/`graph_v2.py` lazy import cycle.
+- Moved Agent resolution, cache keys, tool-set invalidation, and config watcher
+  invalidation to the Engine-owned registry. `graph.get_agent` now delegates.
+- Added ownership regression tests and verified three cold import orders.
+- Full Agent Server suite: 610 passed, 1 skipped.
+- New owner modules and focused Phase 3 tests pass Ruff. Legacy modules touched
+  only to redirect imports retain pre-existing lint diagnostics; unrelated lint
+  cleanup remains outside this phase.
 
 ## Phase 4 - Retire v1 and compatibility shims
 

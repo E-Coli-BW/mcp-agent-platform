@@ -13,6 +13,7 @@ from app.agent.engine.contracts import (
     AgentResumeRequest,
     AgentTurnRequest,
 )
+from app.agent.engine.registry import LangGraphAgentRegistry, get_agent_registry
 
 AgentResolver = Callable[..., Awaitable[Any]]
 
@@ -20,8 +21,13 @@ AgentResolver = Callable[..., Awaitable[Any]]
 class LangGraphAgentEngine:
     """Expose existing LangGraph agents through the stable Engine boundary."""
 
-    def __init__(self, agent_resolver: AgentResolver | None = None) -> None:
+    def __init__(
+        self,
+        agent_resolver: AgentResolver | None = None,
+        registry: LangGraphAgentRegistry | None = None,
+    ) -> None:
         self._agent_resolver = agent_resolver
+        self._registry = registry or get_agent_registry()
 
     async def stream_turn(
         self,
@@ -58,9 +64,7 @@ class LangGraphAgentEngine:
     ) -> Any:
         resolver = self._agent_resolver
         if resolver is None:
-            from app.agent.graph import get_agent
-
-            resolver = get_agent
+            resolver = self._registry.get_agent
         return await resolver(
             request.model,
             temperature=request.temperature,

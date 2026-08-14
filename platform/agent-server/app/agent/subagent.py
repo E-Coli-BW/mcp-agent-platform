@@ -526,12 +526,13 @@ def _build_child_agent(
     brief and no future after its final answer. No need to share state
     with the parent.
     """
-    # Local imports avoid the heavy graph.py module loading on cold tests
+    # Local imports avoid loading provider adapters on cold tests
     # that don't actually invoke the agent (e.g., pure rejection tests).
     from langgraph.checkpoint.memory import MemorySaver
     from langgraph.prebuilt import create_react_agent
 
-    from app.agent.graph import _create_chat_model, _truncate_tool_output
+    from app.agent.graph import _truncate_tool_output
+    from app.agent.model.factory import create_chat_model
     from app.config import settings
     from app.registry.tool_registry import resolve_tools
     from app.runtime.tool_authorization import wrap_tool_with_authorization
@@ -548,7 +549,7 @@ def _build_child_agent(
     truncated = [_truncate_tool_output(t, max_output) for t in resolved]
     wrapped = [wrap_tool_with_authorization(t) for t in truncated]
 
-    model = _create_chat_model(model_name)
+    model = create_chat_model(model_name)
 
     role_prompt = _build_subagent_system_prompt(role=role, max_tool_calls=max_tool_calls)
 

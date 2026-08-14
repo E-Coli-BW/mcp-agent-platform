@@ -61,6 +61,63 @@ def test_run_coordinator_has_no_wire_or_optional_observer_imports():
     ]
 
 
+def test_modular_agent_graph_does_not_import_compatibility_facades():
+    app_dir = Path(__file__).parents[1] / "app"
+    implementation_paths = [
+        app_dir / "agent" / "checkpointing.py",
+        *(app_dir / "agent" / "model").rglob("*.py"),
+        *(app_dir / "agent" / "agent_graph").rglob("*.py"),
+    ]
+    violations = []
+    for module_path in implementation_paths:
+        tree = ast.parse(module_path.read_text())
+        for node in ast.walk(tree):
+            module_name = None
+            if isinstance(node, ast.ImportFrom):
+                module_name = node.module
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in {"app.agent.graph", "app.agent.graph_v2"}:
+                        violations.append(
+                            f"{module_path.relative_to(app_dir)} imports {alias.name}"
+                        )
+            if module_name in {"app.agent.graph", "app.agent.graph_v2"}:
+                violations.append(
+                    f"{module_path.relative_to(app_dir)} imports {module_name}"
+                )
+
+    assert violations == []
+
+
+def test_graph_v2_is_a_compatibility_export_module():
+    app_dir = Path(__file__).parents[1] / "app"
+    facade = app_dir / "agent" / "graph_v2.py"
+    tree = ast.parse(facade.read_text())
+
+    assert not [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+
+
+def test_graph_compatibility_module_does_not_own_agent_cache():
+    app_dir = Path(__file__).parents[1] / "app"
+    facade = app_dir / "agent" / "graph.py"
+    tree = ast.parse(facade.read_text())
+    assigned_names = {
+        target.id
+        for node in tree.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        for target in (
+            node.targets if isinstance(node, ast.Assign) else [node.target]
+        )
+        if isinstance(target, ast.Name)
+    }
+
+    assert not {"_agents", "_agent_tool_names", "_agent_lock"} & assigned_names
+
+
 class FakeLangGraphAgent:
     def __init__(self) -> None:
         self.stream_state = None

@@ -3,6 +3,16 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def reset_agent_registry():
+    from app.agent.engine.registry import get_agent_registry
+
+    registry = get_agent_registry()
+    registry.invalidate()
+    yield
+    registry.invalidate()
+
+
 class TestPromptGovernedAgentCache:
     @pytest.mark.asyncio
     async def test_prompt_version_isolation_in_cache(self, monkeypatch):
@@ -23,8 +33,6 @@ class TestPromptGovernedAgentCache:
 
         monkeypatch.setattr(graph_mod, "create_agent", fake_create_agent)
         monkeypatch.setattr(config_loader_mod, "load_all_configs", lambda _d: {})
-        monkeypatch.setattr(graph_mod, "_agents", {})
-        monkeypatch.setattr(graph_mod, "_agent_tool_names", {})
 
         a_v1 = await graph_mod.get_agent(
             "qwen2.5:7b",
@@ -65,8 +73,6 @@ class TestPromptGovernedAgentCache:
 
         monkeypatch.setattr(graph_mod, "create_agent", fake_create_agent)
         monkeypatch.setattr(config_loader_mod, "load_all_configs", lambda _d: {})
-        monkeypatch.setattr(graph_mod, "_agents", {})
-        monkeypatch.setattr(graph_mod, "_agent_tool_names", {})
 
         a_t1 = await graph_mod.get_agent(
             "qwen2.5:7b",

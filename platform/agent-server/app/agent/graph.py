@@ -19,13 +19,11 @@ Memory model:
 - This means RAM grows with conversation count, but each LLM call stays bounded
 """
 
-import asyncio
 from typing import TYPE_CHECKING
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
 from app.agent.prompts import get_system_prompt
@@ -284,252 +282,58 @@ def _create_chat_model(
     model_name: str | None = None,
     temperature: float | None = None,
 ) -> BaseChatModel:
-    """Factory: create the right LangChain ChatModel based on provider.
+    """Compatibility delegate to the model factory owner."""
+    from app.agent.model.factory import create_chat_model
 
-    WHY A FACTORY? LangGraph's create_react_agent() requires the model to
-    implement bind_tools() — this method converts our tool definitions into
-    the provider's native format (e.g., Ollama's JSON tools parameter,
-    OpenAI's function calling format). Each provider has a DIFFERENT format,
-    so we MUST use the native LangChain class for each provider.
-
-    WHY NOT A GENERIC WRAPPER? (Pitfall #20)
-    We originally tried a custom ChatModel wrapper that would work with any
-    provider. It failed because bind_tools() needs provider-specific knowledge:
-    - Ollama: sends tools as JSON in the request body
-    - OpenAI: sends as 'functions' or 'tools' parameter
-    - Anthropic: sends as 'tools' with different schema format
-    A generic wrapper can't know these differences.
-
-    LAZY IMPORTS: Provider-specific packages (langchain_openai, langchain_ollama)
-    are imported inside the if-branches to avoid ImportError when a provider's
-    package isn't installed. This means you only need `pip install langchain-ollama`
-    if you're using Ollama, not all providers.
-
-    Format: "provider/model" or just "model" (defaults to ollama)
-    Examples: "qwen2.5:7b", "openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"
-
-    `temperature`: per-call override. None ⇒ settings.default_temperature.
-    Used by the chat API to honour the OpenAI-compatible `temperature`
-    field on incoming requests (previously dropped silently — was
-    latent bug D in EVAL-ITERATION-REPORT-2026-05-29.md).
-    """
-    name = model_name or settings.default_model
-    # Resolve temperature once so all branches get the same value; lets the
-    # caller pass 0.0 (which is falsy but a legitimate override) without
-    # the `or` trick swallowing it.
-    temp = temperature if temperature is not None else settings.default_temperature
-
-    if name.startswith("openai/") or name.startswith("gpt-"):
-        from langchain_openai import ChatOpenAI
-
-        model_id = name.replace("openai/", "")
-        return ChatOpenAI(
-            model=model_id,
-            api_key=settings.openai_api_key,
-            temperature=temp,
-            max_tokens=settings.max_tokens,
-            max_retries=0,
-        )
-
-    elif name.startswith("anthropic/") or name.startswith("claude"):
-        # Anthropic via OpenAI-compatible endpoint
-        # NOTE: This uses ChatOpenAI class but points to Anthropic's API
-        # because Anthropic's official endpoint is OpenAI-compatible for chat
-        from langchain_openai import ChatOpenAI
-
-        model_id = name.replace("anthropic/", "")
-        return ChatOpenAI(
-            model=model_id,
-            api_key=settings.anthropic_api_key,
-            base_url="https://api.anthropic.com/v1",
-            temperature=temp,
-            max_tokens=settings.max_tokens,
-            max_retries=0,
-        )
-
-    elif name.startswith("mlx/"):
-        # MLX local server (Apple Silicon native, OpenAI-compatible API)
-        # Runs on localhost:8600 via platform/llm-infra/serving/server.py
-        # Much faster than Ollama for small models (165 tok/s vs 37 tok/s)
-        # NOTE: streaming=False because MLX server doesn't support SSE streaming.
-        # Without this, LangGraph's astream_events gets an empty stream →
-        # "No generations found in stream" error in reflexion/reranking.
-        from langchain_openai import ChatOpenAI
-
-        model_id = name.replace("mlx/", "")
-        return ChatOpenAI(
-            model=model_id,
-            api_key="mlx-local",  # placeholder, MLX server doesn't need auth
-            base_url=settings.mlx_base_url + "/v1",
-            temperature=temp,
-            max_tokens=settings.max_tokens,
-            streaming=False,
-            max_retries=0,
-        )
-
-    else:
-        # Default: Ollama (local inference, no API key needed)
-        # Ollama runs on localhost:11434 by default
-        # ChatOllama handles tool calling via Ollama's native tool API
-        from langchain_ollama import ChatOllama
-
-        model_id = name.replace("ollama/", "")
-        return ChatOllama(
-            model=model_id,
-            base_url=settings.ollama_base_url,
-            temperature=temp,
-            # Note: no max_tokens for Ollama — it uses num_predict in options
-        )
+    return create_chat_model(model_name, temperature=temperature)
 
 
 def _create_chat_model_with_fallback(
     model_name: str | None = None,
     temperature: float | None = None,
 ) -> BaseChatModel:
-    """Create primary model wrapped with fallback chain (if configured).
+    """Compatibility delegate to the fallback model factory owner."""
+    from app.agent.model.factory import create_chat_model_with_fallback
 
-    If AGENT_FALLBACK_MODEL is set, wraps primary in ChatModelWithFallback.
-    Otherwise returns primary directly (zero overhead).
-    """
-    primary = _create_chat_model(model_name, temperature=temperature)
+    return create_chat_model_with_fallback(model_name, temperature=temperature)
 
-    if not settings.fallback_model:
-        return primary
-
-    from app.agent.model_fallback import ChatModelWithFallback
-    fallback = _create_chat_model(settings.fallback_model, temperature=temperature)
-    return ChatModelWithFallback(
-        primary=primary,
-        fallback=fallback,
-        primary_name=model_name or settings.default_model,
-        fallback_name=settings.fallback_model,
-    )
-
-
-# ── Agent Factory ─────────────────────────────────────────────
-
-# ── Checkpointer: conversation state persistence ──────────────
-# Determines where conversation history is stored.
-# - MemorySaver: in-memory (dev only, lost on restart)
-# - RedisSaver: persistent, survives restarts, shared across workers
 
 def _create_checkpointer():
-    """Create the best available checkpointer.
+    """Compatibility delegate to the LangGraph checkpointer owner."""
+    from app.agent.checkpointing import create_checkpointer
 
-    Priority:
-    1. Redis (if REDIS_URL is set and connection succeeds)
-    2. PostgreSQL (if POSTGRES_URL is set)
-    3. MemorySaver (fallback, in-memory only)
-
-    GOTCHA: ``RedisSaver.from_conn_string()`` and ``PostgresSaver.from_conn_string()``
-    return **context managers**, not savers. Using the return value directly
-    gives ``TypeError: Invalid checkpointer ... Received _GeneratorContextManager``
-    from ``create_react_agent``. We have to enter the context to obtain the
-    real saver. Because we want the saver to live for the lifetime of the
-    process, we keep the context manager around as ``_cm_owner`` so it's not
-    garbage-collected (which would close the underlying connection pool).
-    """
-    import os
-    import logging
-    _log = logging.getLogger(__name__)
-
-    # 0) SQLite runtime store — deterministic local persistence for dev and
-    # single-node deployments. This keeps LangGraph thread state aligned with
-    # the runtime checkpoint database used by approval recovery.
-    if os.environ.get("AGENT_RUNTIME_STORE_BACKEND", "memory").strip().lower() == "sqlite" and _async_checkpointer is None:
-        try:
-            from langgraph.checkpoint.sqlite import SqliteSaver
-            from app.config import settings
-            cm = SqliteSaver.from_conn_string(settings.runtime_store_sqlite_path)
-            checkpointer = cm.__enter__()
-            checkpointer._cm_owner = cm  # type: ignore[attr-defined]
-            checkpointer.setup()
-            _log.info("Using SQLite LangGraph checkpointer")
-            return checkpointer
-        except ImportError:
-            _log.warning("langgraph-checkpoint-sqlite is not installed; falling back to other backends")
-        except Exception as e:
-            _log.warning("SQLite LangGraph checkpointer unavailable: %s", e)
-
-    # 1) Redis — but only if REDIS_URL is explicitly set. Otherwise we'd
-    # try to connect to localhost:6379 on every boot and get noisy timeouts
-    # in dev (where Redis is usually not running).
-    redis_url = os.environ.get("REDIS_URL")
-    if redis_url:
-        try:
-            from langgraph.checkpoint.redis import RedisSaver
-
-            cm = RedisSaver.from_conn_string(redis_url)
-            checkpointer = cm.__enter__()
-            # Pin the context manager to the saver so its connection pool
-            # isn't closed when this function returns.
-            checkpointer._cm_owner = cm  # type: ignore[attr-defined]
-            checkpointer.setup()  # create indices if needed
-            _log.info("✅ Using RedisSaver for conversation persistence (%s)", redis_url)
-            return checkpointer
-        except ImportError:
-            _log.info("langgraph-checkpoint-redis not installed, trying postgres...")
-        except Exception as e:
-            _log.warning("Redis unavailable (%s), trying postgres...", e)
-
-    # 2) PostgreSQL
-    pg_url = os.environ.get("POSTGRES_URL")
-    if pg_url:
-        try:
-            from langgraph.checkpoint.postgres import PostgresSaver
-
-            cm = PostgresSaver.from_conn_string(pg_url)
-            checkpointer = cm.__enter__()
-            checkpointer._cm_owner = cm  # type: ignore[attr-defined]
-            checkpointer.setup()
-            _log.info("✅ Using PostgresSaver for conversation persistence")
-            return checkpointer
-        except ImportError:
-            _log.debug("langgraph-checkpoint-postgres not installed")
-        except Exception as e:
-            _log.debug("PostgreSQL unavailable: %s", e)
-
-    # 3) Fallback: in-memory (data lost on restart)
-    _log.warning("⚠️ Using in-memory MemorySaver — conversations lost on restart. "
-                 "Set REDIS_URL or POSTGRES_URL for persistence.")
-    return MemorySaver()
-
-
-# Lazy-initialized checkpointer — avoids blocking server startup
-# if Redis/Postgres are slow to respond
-_checkpointer = None
-_async_checkpointer = None
-_async_checkpointer_cm = None
+    return create_checkpointer()
 
 
 async def _ensure_async_checkpointer():
-    """Enter AsyncSqliteSaver once before creating async LangGraph agents."""
-    global _async_checkpointer, _async_checkpointer_cm
-    if _async_checkpointer is not None:
-        return _async_checkpointer
-    import os
-    if os.environ.get("AGENT_RUNTIME_STORE_BACKEND", "memory").strip().lower() != "sqlite":
-        return None
-    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-    from app.config import settings
-    # Keep LangGraph's high-frequency checkpoint writes in a companion file.
-    # Sharing the runtime event SQLite file causes writer contention between
-    # the recorder and LangGraph's async saver under streaming workloads.
-    checkpoint_path = settings.runtime_store_sqlite_path + ".langgraph"
-    cm = AsyncSqliteSaver.from_conn_string(checkpoint_path)
-    _async_checkpointer = await cm.__aenter__()
-    _async_checkpointer_cm = cm
-    await _async_checkpointer.setup()
-    return _async_checkpointer
+    """Compatibility delegate to async checkpointer initialization."""
+    from app.agent.checkpointing import ensure_async_checkpointer
+
+    return await ensure_async_checkpointer()
 
 
 def _get_checkpointer():
-    global _checkpointer
-    if _async_checkpointer is not None:
-        return _async_checkpointer
-    if _checkpointer is None:
-        _checkpointer = _create_checkpointer()
-    return _checkpointer
+    """Compatibility delegate to the LangGraph checkpointer owner."""
+    from app.agent.checkpointing import get_checkpointer
+
+    return get_checkpointer()
+
+
+def __getattr__(name: str):
+    if name in {"_checkpointer", "_async_checkpointer", "_async_checkpointer_cm"}:
+        from app.agent import checkpointing
+
+        return getattr(checkpointing, name)
+    if name in {"_agents", "_agent_tool_names", "_agent_lock"}:
+        from app.agent.engine.registry import get_agent_registry
+
+        registry = get_agent_registry()
+        return {
+            "_agents": registry.agents,
+            "_agent_tool_names": registry.tool_names,
+            "_agent_lock": registry.lock,
+        }[name]
+    raise AttributeError(name)
 
 
 def create_agent(model_name: str | None = None, temperature: float | None = None):
@@ -604,14 +408,6 @@ def create_agent_from_config(config: "AgentConfig", temperature: float | None = 
     )
 
 
-# Cached agents keyed by (model_or_config_id, temperature, tenant_id, prompt_hash).
-# We include tenant + prompt hash so prompt-governed rollouts don't cross-contaminate
-# agent instances across tenants or prompt versions.
-_agents: dict[tuple[str, float, str, str], object] = {}
-_agent_lock = asyncio.Lock()
-_agent_tool_names: dict[tuple[str, float, str, str], set[str]] = {}
-
-
 def _select_model(user_input: str) -> str:
     """Select model based on query complexity."""
     from app.agent.intent import classify_complexity
@@ -631,102 +427,13 @@ async def get_agent(
     session_id: str | None = None,
     prompt_version: str | None = None,
 ):
-    """Get or create a cached agent for the requested (model, temperature).
+    """Compatibility delegate to the Engine-owned Agent registry."""
+    from app.agent.engine.registry import get_agent_registry
 
-    Prefers YAML-backed agent configs when a matching config id exists.
-    Falls back to the legacy dynamic tool-based agent for model names.
-
-    The cache key is (model_name_or_config_id, resolved_temperature) so
-    a single process can serve multiple sampling temperatures concurrently
-    (e.g. T=0.7 for production chat, T=0 for the eval harness) without
-    instance interference. ChatOllama/ChatOpenAI bake `temperature` into
-    the model instance, so we MUST get a separate instance per value.
-    """
-    import logging
-
-    from app.registry.config_loader import load_all_configs
-    from app.tools.definitions import get_tools
-
-    # Cache key — resolve temperature here once so identical None / default
-    # combinations don't create duplicate cache entries.
-    resolved_temp = temperature if temperature is not None else settings.default_temperature
-    from app.agent.prompts import resolve_system_prompt
-    from app.auth.middleware import tenant_context
-    from app.context.request_context import set_agent_contract, set_prompt_version
-
-    effective_tenant = tenant_id or tenant_context.get() or "default"
-    prompt_resolution = resolve_system_prompt(
-        requested_version=prompt_version,
-        tenant_id=effective_tenant,
+    return await get_agent_registry().get_agent(
+        model_name,
+        temperature=temperature,
+        tenant_id=tenant_id,
         session_id=session_id,
+        prompt_version=prompt_version,
     )
-    # Ensure create_agent()/create_agent_v2() sees the same prompt version in this task context.
-    set_prompt_version(prompt_resolution.version)
-
-    cache_key: tuple[str, float, str, str] = (
-        model_name or "coding-agent",
-        resolved_temp,
-        effective_tenant,
-        prompt_resolution.content_hash,
-    )
-
-    async with _agent_lock:
-        await _ensure_async_checkpointer()
-        configs = load_all_configs(settings.agent_config_dir)
-        config = configs.get(cache_key[0])
-
-        use_v2 = settings.agent_graph_version == "v2"
-
-        if config is not None:
-            set_agent_contract(
-                config.id,
-                config.knowledge.get("collection", ""),
-            )
-            current_tool_names = set(config.tools)
-            cached_tools = _agent_tool_names.get(cache_key, set())
-            if cache_key not in _agents or current_tool_names != cached_tools:
-                if cache_key in _agents:
-                    logging.getLogger(__name__).info(
-                        "🔄 Recreating configured agent %s (T=%.2f): tools changed %s → %s",
-                        cache_key[0],
-                        cache_key[1],
-                        cached_tools,
-                        current_tool_names,
-                    )
-                if use_v2:
-                    from app.agent.graph_v2 import create_agent_v2_from_config
-                    _agents[cache_key] = create_agent_v2_from_config(
-                        config, temperature=temperature
-                    )
-                else:
-                    _agents[cache_key] = create_agent_from_config(
-                        config, temperature=temperature
-                    )
-                _agent_tool_names[cache_key] = current_tool_names
-            return _agents[cache_key]
-
-        set_agent_contract("", "")
-        current_tools = get_tools()
-        current_tool_names = set(t.name for t in current_tools)
-        cached_tools = _agent_tool_names.get(cache_key, set())
-        resolved_model = settings.default_model if cache_key[0] == "coding-agent" else cache_key[0]
-        if cache_key not in _agents or current_tool_names != cached_tools:
-            if cache_key in _agents:
-                logging.getLogger(__name__).info(
-                    "🔄 Recreating fallback agent %s (T=%.2f): tool set changed %s → %s",
-                    cache_key[0],
-                    cache_key[1],
-                    cached_tools,
-                    current_tool_names,
-                )
-            if use_v2:
-                from app.agent.graph_v2 import create_agent_v2
-                _agents[cache_key] = create_agent_v2(
-                    resolved_model, temperature=temperature
-                )
-            else:
-                _agents[cache_key] = create_agent(
-                    resolved_model, temperature=temperature
-                )
-            _agent_tool_names[cache_key] = current_tool_names
-        return _agents[cache_key]

@@ -70,13 +70,9 @@ async def lifespan(app: FastAPI):
 
     # Start config watcher
     def on_config_change(changed_path: str):
-        from app.agent.graph import _agent_tool_names, _agents
-        # Atomic swap: build new empty dicts and replace references.
-        # In-flight requests still hold refs to the old dict entries
-        # and will complete normally. New requests get fresh agents.
-        import app.agent.graph as _graph_mod
-        _graph_mod._agents = {}
-        _graph_mod._agent_tool_names = {}
+        from app.agent.engine.registry import invalidate_agent_cache
+
+        invalidate_agent_cache()
         logger.info("Agent cache atomically replaced due to config change: %s", changed_path)
 
     try:

@@ -21,6 +21,16 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def reset_agent_registry():
+    from app.agent.engine.registry import get_agent_registry
+
+    registry = get_agent_registry()
+    registry.invalidate()
+    yield
+    registry.invalidate()
+
+
 # ── Layer 1: _create_chat_model plumbs `temperature` ─────────────────
 
 
@@ -133,9 +143,6 @@ class TestGetAgentCacheKey:
         # create_agent rather than create_agent_from_config. `load_all_configs`
         # is imported lazily inside get_agent, so patch its source module.
         monkeypatch.setattr(config_loader_mod, "load_all_configs", lambda _d: {})
-        # Reset the module-level cache between tests so prior runs don't leak.
-        monkeypatch.setattr(graph_mod, "_agents", {})
-        monkeypatch.setattr(graph_mod, "_agent_tool_names", {})
 
         a0 = await graph_mod.get_agent("qwen2.5:7b", temperature=0.0)
         a07 = await graph_mod.get_agent("qwen2.5:7b", temperature=0.7)
@@ -167,8 +174,6 @@ class TestGetAgentCacheKey:
 
         monkeypatch.setattr(graph_mod, "create_agent", fake_create_agent)
         monkeypatch.setattr(config_loader_mod, "load_all_configs", lambda _d: {})
-        monkeypatch.setattr(graph_mod, "_agents", {})
-        monkeypatch.setattr(graph_mod, "_agent_tool_names", {})
 
         a1 = await graph_mod.get_agent("qwen2.5:7b", temperature=0.0)
         a2 = await graph_mod.get_agent("qwen2.5:7b", temperature=0.0)
@@ -196,8 +201,6 @@ class TestGetAgentCacheKey:
 
         monkeypatch.setattr(graph_mod, "create_agent", fake_create_agent)
         monkeypatch.setattr(config_loader_mod, "load_all_configs", lambda _d: {})
-        monkeypatch.setattr(graph_mod, "_agents", {})
-        monkeypatch.setattr(graph_mod, "_agent_tool_names", {})
 
         a1 = await graph_mod.get_agent("qwen2.5:7b", temperature=None)
         a2 = await graph_mod.get_agent("qwen2.5:7b", temperature=0.7)
@@ -238,8 +241,6 @@ class TestGetAgentCacheKey:
             "create_agent_from_config",
             fake_create_agent_from_config,
         )
-        monkeypatch.setattr(graph_mod, "_agents", {})
-        monkeypatch.setattr(graph_mod, "_agent_tool_names", {})
 
         assert await graph_mod.get_agent(config.id) is sentinel
         set_agent_contract("poisoned-agent", "poisoned-collection")
@@ -259,10 +260,8 @@ class TestGetAgentCacheKey:
 
         monkeypatch.setattr(settings, "agent_graph_version", "v1")
         monkeypatch.setattr(config_loader_mod, "load_all_configs", lambda _directory: {})
-        monkeypatch.setattr(definitions_mod, "get_tools", lambda: [])
+        monkeypatch.setattr(definitions_mod, "get_tools", list)
         monkeypatch.setattr(graph_mod, "create_agent", lambda *args, **kwargs: object())
-        monkeypatch.setattr(graph_mod, "_agents", {})
-        monkeypatch.setattr(graph_mod, "_agent_tool_names", {})
         set_agent_contract("customer-agent", "customer-faq")
 
         await graph_mod.get_agent("unconfigured-model")

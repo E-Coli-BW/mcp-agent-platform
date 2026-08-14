@@ -207,14 +207,13 @@ def make_maybe_critique_node(critic_model: Optional[BaseChatModel] = None):
         nonlocal critic_model
         if critic_model is not None:
             return critic_model
-        # Lazy import to keep the graph module's import time fast.
-        from app.agent.graph import _create_chat_model
+        from app.agent.model.factory import create_chat_model
 
         name = settings.reflexion_model or settings.cheap_model
         if name not in _critic_cache:
             # T=0 for the critic so its grade is reproducible.
             # The actor's temperature is independent.
-            _critic_cache[name] = _create_chat_model(name, temperature=0.0)
+            _critic_cache[name] = create_chat_model(name, temperature=0.0)
         return _critic_cache[name]
 
     async def maybe_critique(state) -> dict[str, Any]:
