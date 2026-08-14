@@ -11,9 +11,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import Request
-from langchain_core.messages import HumanMessage
 
-from app.agent.graph import get_agent
+from app.agent.engine import AgentTurnRequest, get_agent_engine
 from app.agent.prompts import resolve_system_prompt
 from app.api import openai_sse
 from app.api.chat_models import ChatMessage
@@ -69,12 +68,16 @@ async def stream_agent_response(
     )
     set_prompt_version(prompt_resolution.version)
 
-    agent = await get_agent(
-        model,
-        temperature=temperature,
-        tenant_id=tenant_id,
-        session_id=session_id,
-        prompt_version=prompt_resolution.version,
+    agent_events = await get_agent_engine().stream_turn(
+        AgentTurnRequest(
+            model=model,
+            session_id=session_id,
+            tenant_id=tenant_id,
+            user_input=messages[-1].content if messages else "",
+            recursion_limit=settings.max_agent_steps * 4,
+            temperature=temperature,
+            prompt_version=prompt_resolution.version,
+        )
     )
     store = get_conversation_store()
     req_ctx = get_request_context()
@@ -98,10 +101,6 @@ async def stream_agent_response(
         input_preview,
     )
 
-    config = {
-        "configurable": {"thread_id": session_id},
-        "recursion_limit": settings.max_agent_steps * 4,
-    }
     full_response = ""
     lock_acquired = False
     client_disconnected = False
@@ -189,16 +188,8 @@ async def stream_agent_response(
             return
         lock_acquired = True
 
-        async def agent_events() -> AsyncIterator[dict[str, Any]]:
-            async for event in agent.astream_events(
-                {"messages": [HumanMessage(content=user_input)]},
-                config=config,
-                version="v2",
-            ):
-                yield event
-
         fan_in = AgentEventFanIn(
-            agent_events=agent_events(),
+            agent_events=agent_events,
             root_session_id=session_id,
         )
 

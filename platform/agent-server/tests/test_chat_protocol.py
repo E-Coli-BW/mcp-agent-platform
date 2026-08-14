@@ -138,8 +138,13 @@ async def test_session_lane_timeout_finishes_run(monkeypatch):
         async def append(self, session_id, message):
             return None
 
-    async def fake_get_agent(*args, **kwargs):
-        return MagicMock()
+    class FakeAgentEngine:
+        async def stream_turn(self, request):
+            async def events():
+                if False:
+                    yield {}
+
+            return events()
 
     async def lock_is_held(session_id):
         return True
@@ -155,7 +160,11 @@ async def test_session_lane_timeout_finishes_run(monkeypatch):
         "resolve_system_prompt",
         lambda **kwargs: FakePromptResolution(),
     )
-    monkeypatch.setattr(chat_stream, "get_agent", fake_get_agent)
+    monkeypatch.setattr(
+        chat_stream,
+        "get_agent_engine",
+        lambda: FakeAgentEngine(),
+    )
     monkeypatch.setattr(
         chat_stream,
         "get_conversation_store",

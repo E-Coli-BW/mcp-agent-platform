@@ -1,0 +1,310 @@
+# Agent Runtime Boundary Refactor
+
+> Status: accepted migration contract, Phase 1 complete; Phase 2 not started.
+> Created: 2026-08-14.
+> Scope owner: `platform/agent-server`.
+>
+> This document freezes the refactor boundary and iteration sequence. Changes
+> outside the active phase require this document to be amended and reviewed
+> before implementation. The refactor stops when the phase exit criteria pass;
+> it must not expand through opportunistic cleanup.
+
+## 1. Problem
+
+The Agent Server has the required capabilities, but ownership is concentrated
+in a few large modules and split across incompatible abstraction levels:
+
+- `app/agent/graph.py` owns provider construction, fallback, checkpointers,
+  Agent caching, and the legacy v1 graph.
+- `app/agent/graph_v2.py` owns state, context injection, model-view compression,
+  routing, model calls, tool errors, reflexion integration, artifact synthesis,
+  and graph assembly.
+- `app/runtime/chat_stream.py` owns graph execution plus SSE projection,
+  cancellation, approval fan-in, usage, model provenance, Kafka, retrieval
+  feedback, run recording, and terminal state.
+- `app/runtime/` also owns platform concerns that are valid around an Agent but
+  are not the Agent loop itself: tenancy-aware policy, approvals, idempotency,
+  durable runs, leases, and recovery.
+
+The result is not primarily excessive total code. The problem is that a reader
+cannot follow the Agent execution contract without also parsing platform and
+transport concerns, while platform code imports the concrete LangGraph factory.
+
+## 2. Refactor Goals
+
+1. Give the Agent execution core one explicit boundary.
+2. Keep auth, tenancy, policy, approval, persistence, observability, and HTTP as
+   composable capabilities around that boundary.
+3. Preserve all existing API, event, checkpoint, and agent YAML behavior during
+   migration.
+4. Make the default v2 path independently readable before removing v1.
+5. Reduce reasons for each module to change; reducing total line count is not a
+   primary goal.
+6. Keep each phase reversible and executable with focused tests.
+
+## 3. Non-Goals
+
+- Replacing LangGraph.
+- Adopting Cordis or copying DSH package structure mechanically.
+- Rewriting auth, multitenancy, RAG, subagents, or the frontend.
+- Changing prompts, tool schemas, model routing, event payloads, or public APIs.
+- Deleting v1 before production and compatibility callers use the new boundary.
+- Refactoring unrelated style or legacy code while moving a boundary.
+
+## 4. Target Ownership Model
+
+```text
+HTTP / SSE / polling adapters                 app/api
+                    |
+                    v
+Platform runtime shell                         app/runtime
+run lifecycle | tenancy | policy | approval | idempotency
+recovery | event log | observers | session lane
+                    |
+                    v
+Agent Engine boundary                          app/agent/engine
+resolve agent | invoke turn | inspect pending state | resume graph
+                    |
+          +---------+---------+
+          |                   |
+          v                   v
+Agent graph                capability ports
+state/nodes/routing        Model | Tools | Checkpoint
+          |
+          v
+LangGraph adapter                               app/agent/graph_v2.py
+```
+
+### 4.1 Agent Engine
+
+The Agent Engine owns only execution semantics:
+
+- resolve an agent definition and graph instance;
+- invoke one user turn;
+- stream engine events;
+- inspect pending graph nodes;
+- resume a durable graph without adding another user message.
+
+It does not own:
+
+- JWT or tenant authentication;
+- HTTP/SSE formatting;
+- Kafka or OpenTelemetry emission;
+- approval UI and policy decisions;
+- durable run status or recovery leases;
+- RAG feedback and eval bookkeeping.
+
+### 4.2 Platform Runtime Shell
+
+`app/runtime` wraps the Engine with operational guarantees:
+
+- run identity and terminal status;
+- ordered durable events;
+- policy and approval;
+- cancellation and session serialization;
+- model/tool retry, idempotency, and crash recovery;
+- observers for usage, provenance, Kafka, and retrieval feedback.
+
+It may call the `AgentEngine` contract but must not import `graph.py` or
+`graph_v2.py` directly.
+
+### 4.3 API Adapters
+
+`app/api` translates protocols only:
+
+- authenticate and construct a platform request;
+- choose streaming or non-streaming representation;
+- map runtime events to OpenAI-compatible JSON/SSE;
+- never own Agent state transitions or tool/model retry decisions.
+
+## 5. Target Module Map
+
+```text
+app/agent/engine/
+  contracts.py       # AgentExecutionRequest, AgentExecutionResult, Protocol
+  langgraph.py       # only LangGraph-specific implementation
+  __init__.py        # stable get_agent_engine() composition seam
+
+app/agent/graph/
+  state.py           # AgentState and investigation state integration
+  nodes/             # context, model, tools, verification nodes
+  routing.py         # typed route decisions and terminal reasons
+  builder.py         # v2 graph topology only
+
+app/agent/model/
+  factory.py         # provider-native ChatModel construction
+  fallback.py        # provider fallback/circuit breaker
+
+app/agent/checkpointing.py
+  # checkpointer selection and lifecycle
+
+app/runtime/
+  runner.py          # platform run orchestration around AgentEngine
+  observers/         # usage, provenance, Kafka, retrieval feedback
+  stream.py          # runtime event subscription, not protocol formatting
+
+app/api/
+  chat.py            # request/response adapter
+  openai_sse.py      # OpenAI wire projection
+```
+
+This map is directional. Modules are created only in the phase that owns them;
+empty abstractions must not be added in advance.
+
+## 6. Dependency Rules
+
+1. `app/agent/engine` may import `app/agent/graph*`, model, registry, and
+   checkpoint code.
+2. `app/runtime` may import `app/agent/engine`; it must not import concrete graph
+   modules after Phase 1.
+3. `app/api` may import `app/runtime` and protocol DTOs; it must not import graph
+   modules.
+4. Agent graph code must not import FastAPI, SSE, Kafka producers, auth
+   middleware, or HTTP request objects.
+5. Platform observers consume runtime events; the engine does not call platform
+   observers directly.
+6. Tenant identity is explicit input at the Engine boundary. ContextVars remain
+   an implementation detail during migration, not the boundary contract.
+7. V1 compatibility exports may delegate to new owners, but no new production
+   caller may depend on V1.
+
+## 7. Migration Phases
+
+## Phase 1 - Establish the Agent Engine facade
+
+Status: complete (2026-08-14).
+
+### Scope
+
+- Add `app/agent/engine/{contracts,langgraph}.py` and stable exports.
+- Move production graph invocation behind `AgentEngine`:
+  - normal chat streaming;
+  - durable model-retry resume.
+- Keep `graph.py` factories, caches, and checkpointers in place temporarily.
+- Keep emitted LangChain event dictionaries unchanged.
+- Add contract tests with a fake Engine and focused LangGraph adapter tests.
+
+### Explicitly out of scope
+
+- Moving model factory/checkpointer/cache code.
+- Splitting `chat_stream.py` observers.
+- Changing graph topology or prompts.
+- Deleting v1.
+
+### Exit criteria
+
+- `app/runtime` has no direct import of `app.agent.graph` or `graph_v2`.
+- Chat and retry recovery pass through the same Engine contract.
+- Normal turn and `ainvoke(None)` resume behavior are covered.
+- Existing protocol, recovery, and full suites pass.
+
+### Completion record
+
+- Added the `AgentEngine` contract and LangGraph adapter under
+  `app/agent/engine/`.
+- Migrated normal chat streaming and durable model-retry resume to the Engine
+  boundary.
+- Added an import-boundary regression test for `app/runtime` and `app/api`.
+- Phase acceptance: 22 passed.
+- Full Agent Server suite: 600 passed, 1 skipped.
+- Touched-file Ruff and `git diff --check`: passed. Repository-wide Ruff still
+  reports pre-existing diagnostics outside the Phase 1 files; cleanup is not
+  part of this refactor.
+
+## Phase 2 - Separate platform runner from observers and wire adapters
+
+### Scope
+
+- Introduce a platform `RunCoordinator` around `AgentEngine`.
+- Extract usage/provenance/Kafka/retrieval feedback into runtime observers.
+- Keep SSE payloads byte-compatible.
+- Leave `chat_stream.py` as a compatibility facade until callers migrate.
+
+### Exit criteria
+
+- Core turn orchestration can run without FastAPI, SSE, Kafka, or RAG feedback.
+- Observer failures cannot alter Agent execution outcome.
+- `chat_stream.py` contains only composition and compatibility exports.
+
+## Phase 3 - Consolidate graph/model/checkpoint ownership
+
+### Scope
+
+- Move provider construction to `app/agent/model/factory.py`.
+- Move checkpointer selection/lifecycle to `app/agent/checkpointing.py`.
+- Move cache/agent resolution into the Engine implementation.
+- Split v2 state, nodes, routing, and builder according to the target map.
+- Preserve temporary imports from `graph.py` for tests and external callers.
+
+### Exit criteria
+
+- `graph_v2.py` is removed or reduced to a compatibility export module.
+- Every new graph module has one reason to change.
+- No circular import between engine, graph, model, and checkpointing.
+
+## Phase 4 - Retire v1 and compatibility shims
+
+### Preconditions
+
+- No production setting or documented deployment selects v1.
+- Search and runtime telemetry show no v1 usage.
+- All tests patch the Engine boundary rather than v1 factories.
+
+### Scope
+
+- Remove `create_react_agent` v1 path and `agent_graph_version` switch.
+- Remove compatibility exports after one release window.
+- Update architecture documents and deployment examples.
+
+### Exit criteria
+
+- One production graph path.
+- No v1 cache, prompt-modifier, or factory branches remain.
+
+## 8. Invariants During Migration
+
+Every phase must preserve:
+
+- OpenAI-compatible streaming and non-streaming responses;
+- tenant-isolated agent cache behavior;
+- prompt-version cache isolation;
+- approval and tool authorization before side effects;
+- tool idempotency and durable model-retry recovery;
+- cancellation and session lane semantics;
+- runtime event ids and terminal reasons;
+- current agent YAML and plugin contracts.
+
+No phase may combine code movement with behavior changes unless the behavior
+change is separately documented, tested, and explicitly added to this document.
+
+## 9. Validation Matrix
+
+Each phase runs:
+
+1. Focused contract tests for the new boundary.
+2. Chat protocol and prompt/tenant cache tests.
+3. Approval, cancellation, and retry recovery tests affected by the slice.
+4. Full `platform/agent-server` pytest suite.
+5. Ruff on every touched Python file.
+6. `git diff --check` and editor diagnostics.
+
+For Phase 1 specifically:
+
+```text
+tests/test_agent_engine.py
+tests/test_chat_protocol.py
+tests/test_prompt_cache_isolation.py
+tests/test_temperature_plumbing.py
+tests/test_model_retry_resume_executor.py
+tests/test_runtime_model_retry_crash_recovery_script.py
+```
+
+## 10. Change Control
+
+- Only one phase may be in progress.
+- Before implementation, update `Status` and the active phase scope here.
+- New cleanup ideas are recorded under a future phase; they are not executed in
+  the current patch.
+- A phase ends when its exit criteria pass. Further optimization requires a new
+  document revision and a separate change.
+- Commits should name the boundary moved, not claim a broad runtime rewrite.

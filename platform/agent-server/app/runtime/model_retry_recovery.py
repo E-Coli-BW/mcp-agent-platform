@@ -7,6 +7,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage
 
+from app.agent.engine import AgentResumeRequest, get_agent_engine
 from app.auth.middleware import tenant_context
 from app.config import settings
 from app.context.request_context import set_request_context
@@ -57,7 +58,6 @@ async def resume_model_retry_run(
     store: SQLiteCheckpointStore,
 ) -> ModelRetryResumeResult:
     """Resume the pending call_llm node after a claimed waiting checkpoint."""
-    from app.agent.graph import get_agent
     from app.agent.subagent_context import init_root_context
     from app.middleware.session_lane import release_session_lock, wait_for_session_lock
     from app.registry.tool_registry import get_registered_tools
@@ -92,30 +92,28 @@ async def resume_model_retry_run(
     cancellation = get_run_cancellation_registry()
     await cancellation.register(run_id)
     try:
-        agent = await get_agent(
-            model,
-            temperature=temperature,
-            tenant_id=tenant_id,
+        resume_request = AgentResumeRequest(
+            model=model,
             session_id=session_id,
+            tenant_id=tenant_id,
+            recursion_limit=settings.max_agent_steps * 4,
+            temperature=temperature,
             prompt_version=prompt_version,
         )
-        config = {
-            "configurable": {"thread_id": session_id},
-            "recursion_limit": settings.max_agent_steps * 4,
-        }
-        snapshot = await agent.aget_state(config)
-        if "call_llm" not in snapshot.next:
+        engine = get_agent_engine()
+        pending_nodes = await engine.pending_nodes(resume_request)
+        if "call_llm" not in pending_nodes:
             store.transition(
                 run_id,
                 state="reconciliation_required",
                 payload={
                     "reason": "durable graph has no pending call_llm node",
-                    "graph_next": list(snapshot.next),
+                    "graph_next": list(pending_nodes),
                 },
                 clear_lease=True,
             )
             raise ModelRetryReconciliationError(
-                f"durable graph cannot resume model retry (next={snapshot.next!r})"
+                f"durable graph cannot resume model retry (next={pending_nodes!r})"
             )
 
         await recorder.record_event(
@@ -127,7 +125,7 @@ async def resume_model_retry_run(
                 "resumed_by": user_id,
             },
         )
-        result = await agent.ainvoke(None, config)
+        result = await engine.resume(resume_request)
         response = _assistant_text(list(result.get("messages", [])))
         completed = store.get(run_id)
         if completed is None or completed.state != "completed":

@@ -1,5 +1,4 @@
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
@@ -39,15 +38,12 @@ async def test_fingerprint_drift_requires_reconciliation(tmp_path, monkeypatch):
         model="coding-agent",
     )
 
-    class FakeAgent:
-        async def aget_state(self, _config):
-            return SimpleNamespace(next=("call_llm",))
+    class FakeAgentEngine:
+        async def pending_nodes(self, _request):
+            return ("call_llm",)
 
-        async def ainvoke(self, _input, _config):
+        async def resume(self, _request):
             raise ModelRetryFingerprintError("tool schema changed")
-
-    async def fake_get_agent(*_args, **_kwargs):
-        return FakeAgent()
 
     async def acquire(_session_id, **_kwargs):
         return True
@@ -55,7 +51,10 @@ async def test_fingerprint_drift_requires_reconciliation(tmp_path, monkeypatch):
     async def release(_session_id):
         return None
 
-    monkeypatch.setattr("app.agent.graph.get_agent", fake_get_agent)
+    monkeypatch.setattr(
+        "app.runtime.model_retry_recovery.get_agent_engine",
+        lambda: FakeAgentEngine(),
+    )
     monkeypatch.setattr("app.agent.subagent_context.init_root_context", lambda **_kwargs: None)
     monkeypatch.setattr("app.registry.tool_registry.get_registered_tools", dict)
     monkeypatch.setattr("app.middleware.session_lane.wait_for_session_lock", acquire)
