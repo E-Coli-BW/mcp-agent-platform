@@ -28,6 +28,8 @@ jobs:
   java-tests:
     name: Java Tests
     runs-on: ubuntu-latest
+    env:
+      MAVEN_LOCAL_REPO: ${{ github.workspace }}/platform/memory-server/tmp-m2-repo
     steps:
       - uses: actions/checkout@v4
 

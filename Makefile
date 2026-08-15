@@ -37,8 +37,11 @@ FRONTEND      := platform/frontend
 MVN := command mvn
 MVN_SETTINGS_FILE := $(firstword $(wildcard $(ROOT)/tmp-mvn-settings.xml $(ROOT)/$(MEMORY_SERVER)/tmp-mvn-settings.xml))
 MVN_SETTINGS := $(if $(MVN_SETTINGS_FILE),-s $(MVN_SETTINGS_FILE) -gs $(MVN_SETTINGS_FILE))
-MVN_REPO     := -Dmaven.repo.local=$(ROOT)/$(MEMORY_SERVER)/tmp-m2-repo
-MVN_OPTS     := $(MVN_SETTINGS) $(MVN_REPO)
+# Local builds reuse ~/.m2 by default. CI sets MAVEN_LOCAL_REPO to keep its
+# repository cache isolated and reproducible.
+MAVEN_LOCAL_REPO ?=
+MVN_REPO     := $(if $(strip $(MAVEN_LOCAL_REPO)),-Dmaven.repo.local=$(abspath $(MAVEN_LOCAL_REPO)))
+MVN_OPTS     := $(MVN_SETTINGS) $(MVN_REPO) -B -ntp
 
 # Python venv
 PYTHON := $(ROOT)/$(AGENT_SERVER)/.venv/bin/python
@@ -50,15 +53,15 @@ build: build-java build-python  ## Build all modules
 
 build-java: build-common  ## Build Java modules
 	@echo "📦 Building memory-server..."
-	@cd $(MEMORY_SERVER) && $(MVN) package $(MVN_OPTS) -DskipTests -q
+	@cd $(MEMORY_SERVER) && $(MVN) package $(MVN_OPTS) -DskipTests
 	@echo "📦 Building agent-server-java..."
-	@cd $(AGENT_JAVA) && $(MVN) package $(MVN_OPTS) -DskipTests -q
+	@cd $(AGENT_JAVA) && $(MVN) package $(MVN_OPTS) -DskipTests
 
 build-common:  ## Build shared Java modules (mcp-common, common-spi)
 	@echo "📦 Building mcp-common..."
-	@cd $(MCP_COMMON) && $(MVN) install $(MVN_OPTS) -DskipTests -q
+	@cd $(MCP_COMMON) && $(MVN) install $(MVN_OPTS) -DskipTests
 	@echo "📦 Building common-spi..."
-	@cd $(COMMON_SPI) && $(MVN) install $(MVN_OPTS) -DskipTests -q
+	@cd $(COMMON_SPI) && $(MVN) install $(MVN_OPTS) -DskipTests
 
 build-python:  ## Verify Python dependencies
 	@echo "📦 Checking Python venv..."
@@ -108,7 +111,7 @@ test-python-contract:  ## Enforce context state, checkpoint, model-view, and doc
 	@echo ""
 	@echo "🔒 Running context state contract gate..."
 	@cd $(AGENT_SERVER) && $(PYTHON) -m ruff check \
-		app/agent/compressor.py app/agent/graph_v2.py \
+		app/agent/compressor app/agent/agent_graph \
 		tests/conftest.py tests/test_compressor.py tests/test_graph_v2.py \
 		tests/test_context_contract.py
 	@cd $(AGENT_SERVER) && $(PYTHON) -m pytest \
@@ -122,7 +125,7 @@ test-agent-runtime-contract:  ## Enforce approval, cache isolation, and tool err
 	@cd $(AGENT_SERVER) && $(PYTHON) -m ruff check \
 		app/runtime/checkpoint.py app/runtime/continuation.py \
 		app/runtime/tool_authorization.py app/api/chat.py \
-		app/agent/graph.py app/agent/graph_v2.py app/agent/subagent.py \
+		app/agent/engine app/agent/agent_graph app/agent/subagent.py \
 		app/tools/mcp_client.py tests/test_runtime_tool_authorization.py \
 		tests/test_runtime_approval_api.py \
 		tests/test_runtime_checkpoint.py tests/test_runtime_checkpoint_transitions.py \

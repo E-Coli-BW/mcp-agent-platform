@@ -1,13 +1,13 @@
 """Tool Client — calls Java backends via REST bridge endpoints."""
 
-import httpx
-import json
-import time
+import base64
 import hashlib
 import hmac
-import base64
-from typing import Any, Optional
+import json
+import time
+from typing import Any
 
+import httpx
 
 _MAX_LEGACY_TOKEN_CACHE = 1024
 
@@ -23,7 +23,7 @@ class McpToolClient:
 
     def __init__(self, base_url: str, timeout: int = 30,
                  jwt_secret: str | None = None,
-                 auth_client: Optional[Any] = None,
+                 auth_client: Any | None = None,
                  service_name: str = "agent-server",
                  audience: str = "mcp-platform"):
         self.base_url = base_url.rstrip("/")
@@ -148,9 +148,9 @@ class McpToolClient:
             except httpx.ConnectError:
                 span.set_attribute("error", True)
                 return f"❌ Cannot connect to {self.base_url} — is the service running?"
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - remote tool error boundary
                 span.record_exception(e)
-                return f"❌ Error calling {tool_name}: {str(e)}"
+                return f"❌ Error calling {tool_name}: {e!s}"
 
 
 # ── Agent fleet lineage propagation ────────────────────────────────────────
@@ -194,7 +194,7 @@ def _inject_lineage_headers(headers: dict[str, str]) -> None:
         # module on the agent-context module. Cheap after first call
         # (Python caches the import).
         from app.agent.subagent_context import subagent_context
-    except Exception:
+    except ImportError:
         # If the agent module isn't importable in this deployment
         # (e.g. mcp_client used by an out-of-process script), silently
         # skip — observability must not break the call.

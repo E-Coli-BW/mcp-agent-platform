@@ -1,9 +1,10 @@
 """Lease-protected continuation worker for durable runtime checkpoints."""
 from __future__ import annotations
 
-from typing import Callable, Any, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
-from app.runtime.checkpoint import SQLiteCheckpointStore, RunCheckpoint
+from app.runtime.checkpoint import RunCheckpoint, SQLiteCheckpointStore
 
 
 class ContinuationWorker:
@@ -22,7 +23,7 @@ class ContinuationWorker:
         try:
             result = handler(executing)
             return self.store.transition(run_id, state="completed", payload={"result": result})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - materialize handler failure durably
             return self.store.transition(
                 run_id,
                 state="failed",
@@ -40,5 +41,5 @@ class ContinuationWorker:
         try:
             result = await handler(executing)
             return self.store.transition(run_id, state="completed", payload={"result": result})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - materialize handler failure durably
             return self.store.transition(run_id, state="failed", payload={"error_class": exc.__class__.__name__, "error_message": str(exc)})

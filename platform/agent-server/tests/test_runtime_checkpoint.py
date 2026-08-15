@@ -1,5 +1,6 @@
 from app.runtime.checkpoint import SQLiteCheckpointStore
 
+
 def test_checkpoint_survives_restart_and_lease_is_exclusive(tmp_path):
     path = tmp_path / "runtime.sqlite3"
     first = SQLiteCheckpointStore(path)

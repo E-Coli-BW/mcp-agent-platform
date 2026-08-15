@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar, Token
-from typing import Any, Awaitable, Callable
+from typing import Any
 from weakref import WeakValueDictionary
 
 from langchain_core.tools import BaseTool, StructuredTool
 
 from app.auth.middleware import tenant_context
 from app.context.request_context import get_request_context
-from app.runtime.approval import ApprovalRegistry, ApprovalRequest, get_approval_registry
+from app.runtime.approval import (
+    ApprovalRegistry,
+    ApprovalRequest,
+    get_approval_registry,
+)
 from app.runtime.checkpoint import SQLiteCheckpointStore, get_checkpoint_store
 from app.runtime.policy import PolicyAction, RuntimePolicyEvaluator, get_policy_evaluator
 from app.runtime.recorder import get_run_recorder
 from app.runtime.tool_invocation import make_tool_invocation_envelope
-
 
 ApprovalNotifier = Callable[[ApprovalRequest], Awaitable[None]]
 _approval_notifier: ContextVar[ApprovalNotifier | None] = ContextVar(
