@@ -144,7 +144,9 @@ For visual trace trees across Python agent → Java backends:
 docker run -d --name jaeger \
   -p 16686:16686 \
   -p 4317:4317 \
-  jaegertracing/all-in-one:latest
+  -p 4318:4318 \
+  -e COLLECTOR_OTLP_ENABLED=true \
+  jaegertracing/all-in-one:1.62.0
 
 # Start agent with OTLP export
 AGENT_OTLP_ENDPOINT=http://localhost:4317 .venv/bin/python -m uvicorn app.main:app

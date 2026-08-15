@@ -1,6 +1,6 @@
-# Docker Compose — Full stack for development
-# Usage: docker compose up -d
-# Starts: Redis Stack (vector search) + PostgreSQL
+# Docker Compose — full optional infrastructure for development.
+# Fast core stack: `make docker-up` from the repository root.
+# Full stack: `make docker-up-full`.
 
 services:
   # Redis Stack — includes RediSearch for vector similarity search
@@ -42,7 +42,7 @@ services:
   # Kafka — event streaming for tool audit + analytics
   # Used by: Python agent (producer), Java audit consumer
   kafka:
-    image: confluentinc/cp-kafka:7.7.1
+    image: apache/kafka:3.9.0
     container_name: agent-kafka
     hostname: kafka
     ports:
@@ -54,24 +54,28 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,EXTERNAL://0.0.0.0:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:29093,EXTERNAL://:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
     volumes:
       - kafka-data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 5s
 
   # Kafka UI — browse topics and messages (optional, http://localhost:8080)
   kafka-ui:
-    image: provectuslabs/kafka-ui:latest
+    image: kafbat/kafka-ui:v1.3.0
     container_name: agent-kafka-ui
     ports:
       - "8080:8080"
@@ -124,7 +128,7 @@ services:
   # Jaeger — distributed tracing UI (http://localhost:16686)
   # Receives OTLP spans from Python agent + Java backends
   jaeger:
-    image: jaegertracing/all-in-one:1.60
+    image: jaegertracing/all-in-one:1.62.0
     container_name: agent-jaeger
     ports:
       - "16686:16686"   # Jaeger UI
@@ -134,10 +138,11 @@ services:
       COLLECTOR_OTLP_ENABLED: "true"
 
 # ── Quick Reference ──────────────────────────────────────────
-# Start:    docker-compose up -d
-# Stop:     docker-compose down
-# Logs:     docker-compose logs -f redis
-# Reset:    docker-compose down -v  (deletes data)
+# Start core:  make docker-up
+# Start full:  make docker-up-full
+# Stop:        make docker-down
+# Logs:        docker compose -f platform/docker-compose.yml logs -f kafka
+# Reset:       docker compose -f platform/docker-compose.yml down -v  (deletes data)
 #
 # Redis CLI:  docker exec -it agent-redis redis-cli
 # Check RediSearch: docker exec -it agent-redis redis-cli MODULE LIST

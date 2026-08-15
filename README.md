@@ -86,9 +86,16 @@ make test          # All (Java + Python)
 make test-java     # Java only
 make test-python   # Python only
 
-# Start services
-docker-compose -f platform/docker-compose.yml up -d
+# Start the core local dependencies (Redis + PostgreSQL)
+make docker-up
+
+# Optional: start Kafka/UI, Nacos, Elasticsearch, and Jaeger too
+make docker-up-full
 ```
+
+Kafka, tracing, service discovery, and Elasticsearch are optional for ordinary
+local Agent chat. `make docker-up-full` waits for healthy services and uses
+multi-architecture images, including native ARM64 images on Apple Silicon.
 
 ## Project Structure
 

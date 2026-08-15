@@ -10,6 +10,8 @@
 #   make test-agent-runtime-contract — run approval/cache/error runtime contracts
 #   make build         — build all modules
 #   make verify        — build + test (pre-commit validation)
+#   make docker-up     — start core local dependencies (Redis + PostgreSQL)
+#   make docker-up-full — start all optional infrastructure
 #   make install-hooks — install git pre-commit hook
 #
 # Prerequisites:
@@ -18,7 +20,7 @@
 #   - Python 3.12+ with venv at platform/agent-server/.venv
 #   - Node.js 18+ (for TypeScript MCP servers)
 
-.PHONY: test test-java test-python test-typescript test-frontend test-python-contract test-agent-runtime-contract test-integration build verify install-hooks clean docker-up docker-down
+.PHONY: test test-java test-python test-typescript test-frontend test-python-contract test-agent-runtime-contract test-integration build verify install-hooks clean docker-up docker-up-full docker-down
 
 SHELL := /bin/bash
 
@@ -155,14 +157,19 @@ verify: build test-python-contract test-agent-runtime-contract test  ## Full bui
 
 # ── Docker Integration Tests ──────────────────────────────────
 
-docker-up:  ## Start infrastructure (Redis + PostgreSQL + Auth Service)
-	@echo "🐳 Starting Docker infrastructure..."
+docker-up:  ## Start core local infrastructure (Redis + PostgreSQL)
+	@echo "🐳 Starting core Docker infrastructure..."
 	@command -v docker >/dev/null || (echo "❌ Docker is required for integration tests" && exit 1)
 	@docker info >/dev/null 2>&1 || (echo "❌ Docker daemon is not available" && exit 1)
-	@cd platform && docker compose up -d redis postgres
-	@echo "  Waiting for services to be healthy..."
-	@sleep 5
-	@echo "  ✓ Docker infrastructure ready"
+	@cd platform && docker compose up -d --wait --wait-timeout 60 redis postgres
+	@echo "  ✓ Core Docker infrastructure ready"
+
+docker-up-full:  ## Start all optional infrastructure, including Kafka and tracing
+	@echo "🐳 Starting full Docker infrastructure..."
+	@command -v docker >/dev/null || (echo "❌ Docker is required" && exit 1)
+	@docker info >/dev/null 2>&1 || (echo "❌ Docker daemon is not available" && exit 1)
+	@cd platform && docker compose up -d --wait --wait-timeout 180
+	@echo "  ✓ Full Docker infrastructure ready"
 
 docker-down:  ## Stop Docker infrastructure
 	@echo "🐳 Stopping Docker infrastructure..."
