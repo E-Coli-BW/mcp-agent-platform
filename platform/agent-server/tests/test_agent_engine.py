@@ -67,7 +67,7 @@ def test_run_coordinator_has_no_wire_or_optional_observer_imports():
 def test_modular_agent_graph_does_not_import_compatibility_facades():
     app_dir = Path(__file__).parents[1] / "app"
     implementation_paths = [
-        app_dir / "agent" / "checkpointing.py",
+        app_dir / "agent" / "agent_graph" / "checkpoint_store.py",
         *(app_dir / "agent" / "model").rglob("*.py"),
         *(app_dir / "agent" / "agent_graph").rglob("*.py"),
     ]

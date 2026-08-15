@@ -116,7 +116,7 @@ async def test_follow_up_keeps_client_session_id():
 
     with (
         patch("app.api.chat._stream_agent_response", new=fake_stream),
-        patch("app.agent.subagent_context.init_root_context"),
+        patch("app.agent.delegation.governance.init_root_context"),
         patch("app.registry.tool_registry.get_registered_tools", return_value={}),
     ):
         for content in turns:

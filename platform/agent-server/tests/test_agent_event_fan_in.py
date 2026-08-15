@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from app.agent import fleet_bus
+from app.agent.delegation import progress_bus as fleet_bus
 from app.runtime.agent_event_fan_in import AgentEventFanIn
 
 

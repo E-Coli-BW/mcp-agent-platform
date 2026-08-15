@@ -12,7 +12,12 @@ from app.agent.agent_graph.nodes.context import (
     reset_turn_state_node,
     update_investigation_node,
 )
+from app.agent.agent_graph.nodes.intent_router import (
+    make_intent_router_node,
+    route_after_intent_router,
+)
 from app.agent.agent_graph.nodes.model import make_call_llm_node
+from app.agent.agent_graph.nodes.reflexion import make_maybe_critique_node
 from app.agent.agent_graph.nodes.tools import (
     _format_tool_error,
     _truncate_tool_output,
@@ -27,8 +32,6 @@ from app.agent.agent_graph.routing import (
     route_after_artifact_synthesis,
 )
 from app.agent.agent_graph.state import AgentState
-from app.agent.reflexion import make_maybe_critique_node
-from app.agent.tool_router import make_intent_router_node, route_after_intent_router
 from app.config import settings
 from app.runtime.tool_authorization import wrap_tool_with_authorization
 

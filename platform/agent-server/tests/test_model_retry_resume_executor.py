@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from app.agent.model_recovery import ModelRetryFingerprintError
+from app.agent.model.request_recovery import ModelRetryFingerprintError
 from app.runtime import get_run_recorder, reset_run_recorder_for_tests
 from app.runtime.checkpoint import SQLiteCheckpointStore
 from app.runtime.model_retry_recovery import resume_model_retry_run
@@ -55,7 +55,10 @@ async def test_fingerprint_drift_requires_reconciliation(tmp_path, monkeypatch):
         "app.runtime.model_retry_recovery.get_agent_engine",
         lambda: FakeAgentEngine(),
     )
-    monkeypatch.setattr("app.agent.subagent_context.init_root_context", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "app.agent.delegation.governance.init_root_context",
+        lambda **_kwargs: None,
+    )
     monkeypatch.setattr("app.registry.tool_registry.get_registered_tools", dict)
     monkeypatch.setattr("app.middleware.session_lane.wait_for_session_lock", acquire)
     monkeypatch.setattr("app.middleware.session_lane.release_session_lock", release)

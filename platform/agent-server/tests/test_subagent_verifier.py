@@ -15,11 +15,12 @@ Run:
 """
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agent.subagent_verifier import (
+from app.agent.delegation.answer_verification import (
     VerifyVerdict,
     _parse_verifier_response,
     _reset_verifier_cache_for_tests,
@@ -233,7 +234,7 @@ class TestFormatHelpers:
 def _fresh_subagent_context():
     """Install a root subagent context so spawn_subagent doesn't reject
     on missing-context. Borrowed from test_subagent.py's pattern."""
-    from app.agent.subagent_context import init_root_context, subagent_context
+    from app.agent.delegation.governance import init_root_context, subagent_context
     token = subagent_context.set(init_root_context(
         root_session_id="tenant1:test-root",
         allowed_tools=["memory_search"],
@@ -246,7 +247,7 @@ def _fresh_subagent_context():
 def _make_fake_run_child(answer: str, error: str | None = None):
     """Build an AsyncMock-style replacement for _run_child that returns
     a SubagentResult without actually invoking LangGraph."""
-    from app.agent.subagent import SubagentResult
+    from app.agent.delegation.executor import SubagentResult
 
     async def fake(*, agent, brief, child_session_id, role, depth,
                    deadline_ms, root_session_id=""):
@@ -273,7 +274,7 @@ class TestSpawnVerifierIntegration:
     async def test_should_passThrough_when_verifierDisabled(self, _fresh_subagent_context):
         """Verifier off → SubagentResult.verified stays None, answer
         unchanged. The whole new code path is skipped."""
-        from app.agent import subagent as subagent_mod
+        import app.agent.delegation.executor as subagent_mod
         with (
             patch.object(subagent_mod, "_run_child", new=_make_fake_run_child("the answer")),
             patch.object(subagent_mod, "_build_child_agent", return_value=MagicMock()),
@@ -293,8 +294,8 @@ class TestSpawnVerifierIntegration:
     async def test_should_setVerifiedTrue_when_gradePasses(
         self, _enable_verifier, _fresh_subagent_context, monkeypatch
     ):
-        from app.agent import subagent as subagent_mod
-        from app.agent import subagent_verifier as v_mod
+        import app.agent.delegation.answer_verification as v_mod
+        import app.agent.delegation.executor as subagent_mod
 
         # Disable auto-retry path so this test only exercises pass.
         monkeypatch.setattr(
@@ -307,7 +308,10 @@ class TestSpawnVerifierIntegration:
         with (
             patch.object(subagent_mod, "_run_child", new=_make_fake_run_child("the answer")),
             patch.object(subagent_mod, "_build_child_agent", return_value=MagicMock()),
-            patch("app.agent.subagent_verifier.verify_subagent_answer", new=fake_verify),
+            patch(
+                "app.agent.delegation.answer_verification.verify_subagent_answer",
+                new=fake_verify,
+            ),
         ):
             result = await subagent_mod.spawn_subagent(
                 role="finder", brief="find X", allowed_tools=["memory_search"],
@@ -327,8 +331,8 @@ class TestSpawnVerifierIntegration:
     ):
         """auto_retry=False → on fail, prepend ⚠️ marker and ship the
         original answer. Tenants with tight latency SLOs choose this."""
-        from app.agent import subagent as subagent_mod
-        from app.agent import subagent_verifier as v_mod
+        import app.agent.delegation.answer_verification as v_mod
+        import app.agent.delegation.executor as subagent_mod
         monkeypatch.setattr(v_mod.settings, "subagent_verifier_auto_retry", False)
 
         async def fake_verify(*, brief, answer, verifier_model=None):
@@ -337,7 +341,10 @@ class TestSpawnVerifierIntegration:
         with (
             patch.object(subagent_mod, "_run_child", new=_make_fake_run_child("the answer")),
             patch.object(subagent_mod, "_build_child_agent", return_value=MagicMock()),
-            patch("app.agent.subagent_verifier.verify_subagent_answer", new=fake_verify),
+            patch(
+                "app.agent.delegation.answer_verification.verify_subagent_answer",
+                new=fake_verify,
+            ),
         ):
             result = await subagent_mod.spawn_subagent(
                 role="finder", brief="find X", allowed_tools=["memory_search"],
@@ -356,8 +363,8 @@ class TestSpawnVerifierIntegration:
     ):
         """Happy retry path: first fail → retry → second pass. Final
         answer is the retry's answer, verified=True, retried=True."""
-        from app.agent import subagent as subagent_mod
-        from app.agent.subagent import SubagentResult
+        import app.agent.delegation.executor as subagent_mod
+        from app.agent.delegation.executor import SubagentResult
 
         # _run_child called twice — first returns "first", retry "second".
         call_count = {"n": 0}
@@ -383,7 +390,10 @@ class TestSpawnVerifierIntegration:
         with (
             patch.object(subagent_mod, "_run_child", new=fake_run_child),
             patch.object(subagent_mod, "_build_child_agent", return_value=MagicMock()),
-            patch("app.agent.subagent_verifier.verify_subagent_answer", new=fake_verify),
+            patch(
+                "app.agent.delegation.answer_verification.verify_subagent_answer",
+                new=fake_verify,
+            ),
         ):
             result = await subagent_mod.spawn_subagent(
                 role="finder", brief="find X", allowed_tools=["memory_search"],
@@ -406,8 +416,8 @@ class TestSpawnVerifierIntegration:
         """Retry happens but second verdict still fails. Ship the
         retry's answer with the SECOND verdict's marker — it's the
         most-recent attempt to follow the verifier's guidance."""
-        from app.agent import subagent as subagent_mod
-        from app.agent.subagent import SubagentResult
+        import app.agent.delegation.executor as subagent_mod
+        from app.agent.delegation.executor import SubagentResult
 
         async def fake_run_child(*, agent, brief, child_session_id, role,
                                   depth, deadline_ms, root_session_id=""):
@@ -428,7 +438,10 @@ class TestSpawnVerifierIntegration:
         with (
             patch.object(subagent_mod, "_run_child", new=fake_run_child),
             patch.object(subagent_mod, "_build_child_agent", return_value=MagicMock()),
-            patch("app.agent.subagent_verifier.verify_subagent_answer", new=fake_verify),
+            patch(
+                "app.agent.delegation.answer_verification.verify_subagent_answer",
+                new=fake_verify,
+            ),
         ):
             result = await subagent_mod.spawn_subagent(
                 role="finder", brief="find X", allowed_tools=["memory_search"],
@@ -447,7 +460,7 @@ class TestSpawnVerifierIntegration:
         """The fail-open invariant end-to-end. Verifier explodes →
         SubagentResult.verified stays None, answer ships unchanged.
         A broken verifier MUST NOT degrade the subagent."""
-        from app.agent import subagent as subagent_mod
+        import app.agent.delegation.executor as subagent_mod
 
         async def fake_verify(*, brief, answer, verifier_model=None):
             return VerifyVerdict.skipped("verifier error: RuntimeError")
@@ -455,7 +468,10 @@ class TestSpawnVerifierIntegration:
         with (
             patch.object(subagent_mod, "_run_child", new=_make_fake_run_child("untouched")),
             patch.object(subagent_mod, "_build_child_agent", return_value=MagicMock()),
-            patch("app.agent.subagent_verifier.verify_subagent_answer", new=fake_verify),
+            patch(
+                "app.agent.delegation.answer_verification.verify_subagent_answer",
+                new=fake_verify,
+            ),
         ):
             result = await subagent_mod.spawn_subagent(
                 role="finder", brief="find X", allowed_tools=["memory_search"],
@@ -471,14 +487,12 @@ class TestSpawnVerifierIntegration:
         """Don't grade a child that already crashed/timed-out. The
         error field carries the failure signal; verifying empty
         answer is wasteful and also confusing for the bus event."""
-        from app.agent import subagent as subagent_mod
-        verifier = AsyncMock()
-
+        import app.agent.delegation.executor as subagent_mod
         with (
             patch.object(subagent_mod, "_run_child",
                           new=_make_fake_run_child("", error="timed out")),
             patch.object(subagent_mod, "_build_child_agent", return_value=MagicMock()),
-            patch("app.agent.subagent_verifier.verify_subagent_answer",
+            patch("app.agent.delegation.answer_verification.verify_subagent_answer",
                    new=AsyncMock(side_effect=AssertionError("should not be called"))),
         ):
             result = await subagent_mod.spawn_subagent(
@@ -503,9 +517,9 @@ class TestChildVerifiedEvent:
     ):
         import asyncio
 
-        from app.agent import subagent as subagent_mod
-        from app.agent import subagent_verifier as v_mod
-        from app.agent import fleet_bus
+        import app.agent.delegation.answer_verification as v_mod
+        import app.agent.delegation.executor as subagent_mod
+        from app.agent.delegation import progress_bus as fleet_bus
 
         # Confirm event type is registered in EVENT_TYPES — this is the
         # contract subscribers rely on.
@@ -544,7 +558,7 @@ class TestChildVerifiedEvent:
                               new=_make_fake_run_child("the answer")),
                 patch.object(subagent_mod, "_build_child_agent",
                               return_value=MagicMock()),
-                patch("app.agent.subagent_verifier.verify_subagent_answer",
+                patch("app.agent.delegation.answer_verification.verify_subagent_answer",
                        new=fake_verify),
             ):
                 await subagent_mod.spawn_subagent(
@@ -578,7 +592,7 @@ class TestChildVerifiedEvent:
         subagent module and assert child_verified is never among the
         recorded publish calls. This makes the test deterministic
         regardless of any future async-ordering changes."""
-        from app.agent import subagent as subagent_mod
+        import app.agent.delegation.executor as subagent_mod
 
         async def fake_verify(*, brief, answer, verifier_model=None):
             return VerifyVerdict.skipped("crashed")
@@ -593,7 +607,7 @@ class TestChildVerifiedEvent:
                           new=_make_fake_run_child("the answer")),
             patch.object(subagent_mod, "_build_child_agent",
                           return_value=MagicMock()),
-            patch("app.agent.subagent_verifier.verify_subagent_answer",
+            patch("app.agent.delegation.answer_verification.verify_subagent_answer",
                    new=fake_verify),
             # Patch publish_event AT THE SITE WHERE IT'S CALLED FROM
             # (subagent_mod) — not at the source. This is the standard
@@ -622,7 +636,7 @@ class TestVerifyVerdict:
         passed/grade fields after they're set by the verifier — those
         decisions are load-bearing for the audit log."""
         v = VerifyVerdict(passed=True, grade=4, reasoning="ok")
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             v.passed = False  # type: ignore[misc]
 
     def test_skipped_helper(self):

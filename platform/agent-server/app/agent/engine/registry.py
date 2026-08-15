@@ -6,8 +6,8 @@ import asyncio
 import logging
 from typing import Any, TypeAlias
 
-from app.agent.checkpointing import ensure_async_checkpointer
-from app.agent.prompts import resolve_system_prompt
+from app.agent.agent_graph.checkpoint_store import ensure_async_checkpointer
+from app.agent.execution_policy.system_prompts import resolve_system_prompt
 from app.auth.middleware import tenant_context
 from app.config import settings
 from app.context.request_context import set_agent_contract, set_prompt_version

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agent.model_recovery import (
+from app.agent.model.request_recovery import (
     EmptyModelResponseError,
     ModelRequestFailedError,
     ModelRetryFingerprintError,

@@ -39,8 +39,8 @@ prompt: |
 
   Read that file (it's short — about 100 lines, read it in full) and
   quote the exact two-word phrase the docstring uses. Optional but
-  helpful: also peek at platform/agent-server/app/agent/subagent.py
-  and platform/agent-server/app/agent/subagent_context.py to add
+  helpful: also peek at platform/agent-server/app/agent/delegation/executor.py
+  and platform/agent-server/app/agent/delegation/governance.py to add
   brief context about what the feature does.
 
   TIP: this is itself embarrassingly parallel — if you have a

@@ -69,7 +69,7 @@ def make_hallucination_fix_node(available_tools: set[str] | None = None):
     )
 
     def fix_hallucination(state: AgentState) -> dict[str, Any]:
-        from app.agent.tool_contract import missing_tool_requirement
+        from app.agent.tool_routing.required_tools import missing_tool_requirement
 
         missing = missing_tool_requirement(list(state.messages), available_tools)
         suffix = (

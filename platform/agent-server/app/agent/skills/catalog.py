@@ -234,7 +234,7 @@ async def fetch_skill_catalog(
             {"query": "*", "namespace": namespace, "limit": max_entries * 2},
             tenant_id=tenant_id,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional skill catalog fails open
         logger.warning("Skill catalog fetch failed: %s", e)
         _cache_put(cache_key, [])
         return []
@@ -297,8 +297,8 @@ async def build_skill_catalog_block(tenant_id: str) -> str:
 
 __all__ = [
     "SkillEntry",
-    "fetch_skill_catalog",
-    "render_skill_catalog",
     "build_skill_catalog_block",
+    "fetch_skill_catalog",
     "invalidate_skills_cache",
+    "render_skill_catalog",
 ]

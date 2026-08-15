@@ -125,7 +125,7 @@ test-agent-runtime-contract:  ## Enforce approval, cache isolation, and tool err
 	@cd $(AGENT_SERVER) && $(PYTHON) -m ruff check \
 		app/runtime/checkpoint.py app/runtime/continuation.py \
 		app/runtime/tool_authorization.py app/api/chat.py \
-		app/agent/engine app/agent/agent_graph app/agent/subagent.py \
+		app/agent/engine app/agent/agent_graph app/agent/delegation \
 		app/tools/mcp_client.py tests/test_runtime_tool_authorization.py \
 		tests/test_runtime_approval_api.py \
 		tests/test_runtime_checkpoint.py tests/test_runtime_checkpoint_transitions.py \

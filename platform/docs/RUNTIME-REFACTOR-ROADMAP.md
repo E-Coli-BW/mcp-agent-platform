@@ -93,7 +93,7 @@ There are multiple state mechanisms:
 
 | State | Current owner | Storage | Notes |
 |---|---|---|---|
-| Graph checkpoint | `app/agent/checkpointing.py` | Redis/Postgres if env set, else MemorySaver | Stores lossless messages plus typed investigation state; model-view compression is not persisted |
+| Graph checkpoint | `app/agent/agent_graph/checkpoint_store.py` | Redis/Postgres if env set, else MemorySaver | Stores lossless messages plus typed investigation state; model-view compression is not persisted |
 | Chat history | `ConversationStore` | Redis list + local LRU fallback | Separate from graph checkpoint |
 | Request metadata | ContextVars | process-local | `request_id`, `run_id`, `session_id`, `prompt_version` |
 | Model provenance | `model_provenance.py` + Kafka producer | Kafka best effort | Strong schema direction |
@@ -107,7 +107,7 @@ Main surfaces:
 - `app/config.py`: env-driven runtime settings.
 - `agents/*.yaml`: agent identity, model, prompt, tools, guardrails, routing.
 - `app/registry/tool_registry.py`: registered LangChain tools.
-- `app/agent/prompts.py`: prompt versions and governance resolution.
+- `app/agent/execution_policy/system_prompts.py`: prompt versions and governance resolution.
 - MCP backend URLs in settings: memory, filesearch, codeexec.
 - Feature flags: graph version, direct tool routing, reflexion, subagent verifier,
   reranker strategy, prompt canary.

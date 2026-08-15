@@ -7,7 +7,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
-from app.agent import fleet_bus
+from app.agent.delegation import progress_bus
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +32,9 @@ class AgentEventFanIn:
         *,
         agent_events: AsyncIterator[AgentEvent],
         root_session_id: str,
-        register_session: RegisterSession = fleet_bus.register_session,
-        unregister_session: UnregisterSession = fleet_bus.unregister_session,
-        subscribe: Subscribe = fleet_bus.subscribe,
+        register_session: RegisterSession = progress_bus.register_session,
+        unregister_session: UnregisterSession = progress_bus.unregister_session,
+        subscribe: Subscribe = progress_bus.subscribe,
     ) -> None:
         self._agent_events = agent_events
         self._root_session_id = root_session_id

@@ -11,7 +11,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.agent.engine import AgentEngine, AgentTurnRequest
-from app.agent.prompts import PromptResolution, resolve_system_prompt
+from app.agent.execution_policy.system_prompts import (
+    PromptResolution,
+    resolve_system_prompt,
+)
 from app.config import settings
 from app.context.request_context import get_request_context, set_prompt_version
 from app.runtime import RunStatus, get_run_recorder

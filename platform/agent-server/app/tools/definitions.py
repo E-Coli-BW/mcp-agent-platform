@@ -220,7 +220,7 @@ def file_search(query: str, directory: str | None = None) -> str:
         return output
     except subprocess.TimeoutExpired:
         return "Search timed out — try a more specific query"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - tool failures become model-visible results
         return f"❌ Search failed: {e}"
 
 
@@ -256,7 +256,7 @@ def file_read(path: str, start_line: int | None = None, end_line: int | None = N
         if artifact is not None:
             content = f"{artifact.to_tool_block()}\n\nSelected source excerpt:\n{content}"
         return content
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - tool failures become model-visible results
         return f"❌ Failed to read {path}: {e}"
 
 
@@ -314,7 +314,7 @@ def file_list(directory: str | None = None, depth: int = 3) -> str:
         if not tree_lines:
             return f"Directory '{directory or '.'}' is empty"
         return header + '\n' + '\n'.join(tree_lines)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - tool failures become model-visible results
         return f"❌ Failed to list: {e}"
 
 
@@ -342,20 +342,31 @@ async def code_shell(command: str) -> str:
     )
 
 
-from app.tools.rag_tool import rag_search
-from app.tools.agent_mode import file_write, file_edit, git_status, git_diff, git_commit, run_tests
-from app.tools.ops_tools import (
-    git_branch, git_log, pr_create,
-    ticket_create, ticket_list, ticket_update,
-)
-from app.tools.subagent_tool import spawn_subagent
-
 # ── Tool Registry ─────────────────────────────────────────────
 # Tools are split into "always available" (local) and "backend-dependent" (remote).
 # Remote tools are only registered if their backend is reachable at startup.
 # This prevents the LLM from wasting tokens considering tools that will fail.
-
 import logging
+
+from app.tools.agent_mode import (
+    file_edit,
+    file_write,
+    git_commit,
+    git_diff,
+    git_status,
+    run_tests,
+)
+from app.tools.ops_tools import (
+    git_branch,
+    git_log,
+    pr_create,
+    ticket_create,
+    ticket_list,
+    ticket_update,
+)
+from app.tools.rag_tool import rag_search
+from app.tools.subagent_tool import spawn_subagent
+
 _tool_logger = logging.getLogger(__name__)
 
 # Always available — run locally, no external dependency
@@ -371,7 +382,7 @@ _LOCAL_TOOLS = [
     # spawn_subagent is a meta-tool: it doesn't talk to any backend
     # service, it invokes another instance of the agent in-process.
     # Always available; per-request guardrails enforced in
-    # app.agent.subagent_context.SubagentContext (depth, fanout, budget).
+    # app.agent.delegation.governance.SubagentContext (depth, fanout, budget).
     spawn_subagent,
 ]
 
@@ -388,7 +399,7 @@ def _check_backend(url: str) -> bool:
     try:
         resp = httpx.get(f"{url}/actuator/health", timeout=1.0)
         return resp.status_code == 200
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional backend probe fails closed
         return False
 
 

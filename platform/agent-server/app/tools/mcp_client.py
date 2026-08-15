@@ -113,7 +113,7 @@ class McpToolClient:
         Also injects agent fleet lineage headers (X-Root-Session-Id,
         X-Parent-Session-Id, X-Agent-Depth) so the Java AuditAspect can
         thread audit rows into a spawn tree. See
-        ``app.agent.subagent_context.SubagentContext`` for the source of
+        ``app.agent.delegation.governance.SubagentContext`` for the source of
         truth; mirror constants live in ``mcp-common``'s
         ``AgentLineageContext`` on the Java side.
         """
@@ -193,7 +193,7 @@ def _inject_lineage_headers(headers: dict[str, str]) -> None:
         # Lazy import to avoid a hard dependency from the tool-client
         # module on the agent-context module. Cheap after first call
         # (Python caches the import).
-        from app.agent.subagent_context import subagent_context
+        from app.agent.delegation.governance import subagent_context
     except ImportError:
         # If the agent module isn't importable in this deployment
         # (e.g. mcp_client used by an out-of-process script), silently

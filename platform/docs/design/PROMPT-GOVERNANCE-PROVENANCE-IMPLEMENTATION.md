@@ -31,7 +31,8 @@ It is designed to be incremental and reversible for both runtimes:
 
 ## Prompt sources
 
-- Python static prompt source: `platform/agent-server/app/agent/prompts.py`
+- Python static prompt source:
+   `platform/agent-server/app/agent/execution_policy/system_prompts.py`
 - Java static prompt source: `platform/agent-server-java/src/main/java/com/example/agent/agent/PromptService.java`
 
 ## Model call sites
@@ -202,7 +203,7 @@ Target SLO: reconstruction in <= 5 minutes via one query bundle.
 1. `platform/agent-server/app/api/chat.py`
    - generate `request_id`, `run_id`
    - attach to request context and pass through graph config
-2. `platform/agent-server/app/agent/prompts.py`
+2. `platform/agent-server/app/agent/execution_policy/system_prompts.py`
    - replace static getter path with `PromptResolver` adapter
 3. `platform/agent-server/app/agent/model/factory.py`
 4. `platform/agent-server/app/agent/agent_graph/nodes/model.py`

@@ -14,7 +14,10 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from app.agent.agent_graph.nodes.context import _build_llm_view
 from app.agent.agent_graph.state import AgentState, ContextBudgetExceededError
 from app.agent.compressor import update_investigation_from_messages
-from app.agent.model_recovery import invoke_with_model_retry, policy_from_settings
+from app.agent.model.request_recovery import (
+    invoke_with_model_retry,
+    policy_from_settings,
+)
 from app.config import settings
 
 logger = logging.getLogger(__name__)

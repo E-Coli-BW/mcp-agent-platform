@@ -18,13 +18,15 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
+from app.agent.agent_graph.nodes.intent_router import (
+    make_intent_router_node,
+    route_after_intent_router,
+)
 from app.agent.agent_graph.state import AgentState
-from app.agent.tool_router import (
+from app.agent.tool_routing.direct_dispatch import (
     READ_ONLY_TOOL_ALLOWLIST,
     RoutedCall,
     classify_for_direct_dispatch,
-    make_intent_router_node,
-    route_after_intent_router,
 )
 
 # ── Helpers ────────────────────────────────────────────────────────────

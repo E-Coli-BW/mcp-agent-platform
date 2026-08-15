@@ -135,7 +135,7 @@ app/agent/model/
   factory.py         # provider-native ChatModel construction
   fallback.py        # provider fallback/circuit breaker
 
-app/agent/checkpointing.py
+app/agent/agent_graph/checkpoint_store.py
   # checkpointer selection and lifecycle
 
 app/runtime/
@@ -253,7 +253,8 @@ Status: complete (2026-08-14).
 ### Scope
 
 - Move provider construction to `app/agent/model/factory.py`.
-- Move checkpointer selection/lifecycle to `app/agent/checkpointing.py`.
+- Move checkpointer selection/lifecycle to
+  `app/agent/agent_graph/checkpoint_store.py`.
 - Move cache/agent resolution into the Engine implementation.
 - Split v2 state, nodes, routing, and builder according to the target map.
 - Preserve temporary imports from `graph.py` for tests and external callers.
@@ -269,7 +270,8 @@ Status: complete (2026-08-14).
 - Moved provider construction and fallback/circuit-breaker ownership to
   `app/agent/model/`; the legacy fallback module is a compatibility facade.
 - Moved LangGraph checkpointer selection and lifecycle to
-  `app/agent/checkpointing.py`, separate from durable runtime checkpoints.
+  `app/agent/agent_graph/checkpoint_store.py`, separate from durable runtime
+  checkpoints.
 - Split v2 state, context/model/tool/verification nodes, routing, topology, and
   Agent-definition construction under `app/agent/agent_graph/`.
 - Reduced `graph_v2.py` to compatibility exports and removed the former
@@ -331,8 +333,8 @@ app/agent/intent/
   evaluation.py     # classifier cases, adapters, and result contracts
   eval_cli.py       # live inference, rendering, and result persistence
 
-app/agent/classifier_eval.py
-  # thin CLI and compatibility re-export facade
+app/agent/intent/eval_cli.py
+  # classifier evaluation CLI entry point
 
 app/agent/compressor/
   __init__.py       # stable old import path and serialized class identity

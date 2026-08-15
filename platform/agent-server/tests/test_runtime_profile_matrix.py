@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.agent.runtime_profile import resolve_runtime_profile
+from app.agent.execution_policy.runtime_profiles import resolve_runtime_profile
 
 
 def test_profiles_have_bounded_autonomy_matrix():

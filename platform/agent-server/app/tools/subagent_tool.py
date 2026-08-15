@@ -1,7 +1,7 @@
 """LangChain @tool wrapper for spawn_subagent.
 
-Kept in a separate file from app.agent.subagent because:
-- The engine (app.agent.subagent) is pure Python and trivially unit-testable
+Kept separate from app.agent.delegation.executor because:
+- The executor is pure Python and independently unit-testable
   without LangChain in the test path.
 - This wrapper has LangChain schema decorators that pull in heavy imports
   and constrain the function signature in ways tests find awkward.
@@ -16,7 +16,7 @@ import logging
 
 from langchain_core.tools import tool
 
-from app.agent.subagent import spawn_subagent as _spawn
+from app.agent.delegation.executor import spawn_subagent as _spawn
 
 logger = logging.getLogger(__name__)
 

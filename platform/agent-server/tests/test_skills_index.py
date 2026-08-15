@@ -1,4 +1,4 @@
-"""Unit tests for app.agent.skills_index — catalog parser, cache, renderer."""
+"""Unit tests for the Agent skill catalog parser, cache, and renderer."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import time
 
 import pytest
 
-from app.agent import skills_index
-from app.agent.skills_index import (
+import app.agent.skills.catalog as skills_index
+from app.agent.skills.catalog import (
     SkillEntry,
     _extract_summary,
     _parse_memory_search_result,
@@ -16,7 +16,6 @@ from app.agent.skills_index import (
     invalidate_skills_cache,
     render_skill_catalog,
 )
-
 
 # ── Parsers ──────────────────────────────────────────────────────────────────
 
@@ -124,7 +123,7 @@ class TestRenderCatalog:
         entries = [SkillEntry(key="k", summary="x" * 500, tags=[])]
         out = render_skill_catalog(entries, summary_chars=50)
         # The line for k must contain ellipsis and be bounded
-        line = [l for l in out.splitlines() if l.startswith("- ")][0]
+        line = next(line for line in out.splitlines() if line.startswith("- "))
         assert "…" in line
         assert len(line) < 200
 
@@ -210,7 +209,7 @@ class TestFetchSkillCatalog:
         )
         client = patch_memory(payload)
 
-        from app.agent.skills_index import fetch_skill_catalog
+        from app.agent.skills.catalog import fetch_skill_catalog
 
         # First call → hits the backend
         entries = await fetch_skill_catalog("tenantA")
@@ -233,7 +232,7 @@ class TestFetchSkillCatalog:
         monkeypatch.setattr(defs, "_get_memory", lambda: _Boom())
         invalidate_skills_cache()
 
-        from app.agent.skills_index import fetch_skill_catalog
+        from app.agent.skills.catalog import fetch_skill_catalog
 
         entries = await fetch_skill_catalog("tenantA")
         assert entries == []
@@ -245,7 +244,7 @@ class TestFetchSkillCatalog:
         ]
         patch_memory(json.dumps(records))
 
-        from app.agent.skills_index import fetch_skill_catalog
+        from app.agent.skills.catalog import fetch_skill_catalog
 
         entries = await fetch_skill_catalog("tenantA", max_entries=5)
         assert len(entries) == 5

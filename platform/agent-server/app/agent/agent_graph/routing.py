@@ -69,7 +69,7 @@ def make_route_node(max_steps: int, available_tools: set[str] | None = None):
             return "tools"
 
         if isinstance(last, AIMessage) and not last.tool_calls:
-            from app.agent.tool_contract import missing_tool_requirement
+            from app.agent.tool_routing.required_tools import missing_tool_requirement
 
             previous = state.messages[-2] if len(state.messages) >= 2 else None
             has_recent_tool_result = isinstance(previous, ToolMessage)

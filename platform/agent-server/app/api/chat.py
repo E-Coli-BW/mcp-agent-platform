@@ -58,7 +58,7 @@ async def chat_completions(
     set_request_context(request_id=request_id, run_id=run_id, session_id=session_id)
     set_prompt_version(request.prompt_version or "")
 
-    from app.agent.subagent_context import init_root_context
+    from app.agent.delegation.governance import init_root_context
     from app.registry.tool_registry import get_registered_tools
 
     init_root_context(

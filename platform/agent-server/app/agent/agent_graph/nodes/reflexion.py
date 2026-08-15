@@ -82,7 +82,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -119,7 +119,7 @@ Be terse. Do not include markdown code fences. Do not add commentary.\
 
 
 # ── State helpers ──────────────────────────────────────────────────────────
-def _find_last_user_question(messages: list[BaseMessage]) -> Optional[str]:
+def _find_last_user_question(messages: list[BaseMessage]) -> str | None:
     """Walk backwards to find the user's most recent question.
 
     Skips our own critique HumanMessages (they have the 🪞 marker) so
@@ -136,7 +136,7 @@ def _find_last_user_question(messages: list[BaseMessage]) -> Optional[str]:
     return None
 
 
-def _find_last_assistant_answer(messages: list[BaseMessage]) -> Optional[AIMessage]:
+def _find_last_assistant_answer(messages: list[BaseMessage]) -> AIMessage | None:
     """The most recent AIMessage with no tool calls. That's the 'answer'
     turn — the one the user will actually see. AIMessages with tool calls
     are intermediate reasoning, not for grading."""
@@ -152,7 +152,7 @@ def _find_last_assistant_answer(messages: list[BaseMessage]) -> Optional[AIMessa
 _JSON_OBJ_RE = re.compile(r"\{[^}]*\}", re.DOTALL)
 
 
-def _parse_critic_response(raw: str) -> Optional[tuple[int, str]]:
+def _parse_critic_response(raw: str) -> tuple[int, str] | None:
     """Extract (grade, reasoning) from the critic's raw text.
 
     Tolerant: small models often wrap JSON in markdown fences or add
@@ -179,7 +179,7 @@ def _parse_critic_response(raw: str) -> Optional[tuple[int, str]]:
 
 
 # ── The node ───────────────────────────────────────────────────────────────
-def make_maybe_critique_node(critic_model: Optional[BaseChatModel] = None):
+def make_maybe_critique_node(critic_model: BaseChatModel | None = None):
     """Factory returning a LangGraph node that may inject a revision request.
 
     Returns a coroutine fn that takes AgentState and returns a dict patch
@@ -260,7 +260,7 @@ def make_maybe_critique_node(critic_model: Optional[BaseChatModel] = None):
         try:
             critic = _get_critic()
             response = await critic.ainvoke(critic_input)
-        except Exception as e:  # nosec — fail-open on any critic error
+        except Exception as e:  # noqa: BLE001 - optional critic must fail open
             # Critic failures must NEVER fail the request. We log and
             # pass through. The whole point of the critic is to IMPROVE
             # the answer; if it can't run, the unimproved answer is

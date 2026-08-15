@@ -2,7 +2,7 @@
 
 This module is the single source of truth for "can this agent spawn another
 agent right now?" decisions. It is NOT about *how* to spawn — that's
-``app.agent.subagent``. It's about the budget envelope and depth fence that
+``app.agent.delegation.executor``. It owns the budget envelope and depth fence that
 keep the fleet from melting credit cards.
 
 Why a ContextVar (not a parameter):
@@ -39,8 +39,6 @@ import logging
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import Optional
-
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +207,7 @@ def get_context() -> SubagentContext:
 def init_root_context(
     *,
     root_session_id: str,
-    allowed_tools: Optional[list[str]] = None,
+    allowed_tools: list[str] | None = None,
     token_budget: int = DEFAULT_BUDGET_TOKENS,
     deadline_ms: int = DEFAULT_DEADLINE_MS,
 ) -> SubagentContext:

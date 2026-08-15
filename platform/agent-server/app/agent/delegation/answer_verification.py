@@ -83,7 +83,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -132,12 +131,12 @@ class VerifyVerdict:
     this as "unknown, pass through unmodified".
     """
 
-    passed: Optional[bool]
-    grade: Optional[int]
+    passed: bool | None
+    grade: int | None
     reasoning: str
 
     @classmethod
-    def skipped(cls, reason: str) -> "VerifyVerdict":
+    def skipped(cls, reason: str) -> VerifyVerdict:
         """Verifier didn't run (disabled, no answer, etc.). Treat as unknown."""
         return cls(passed=None, grade=None, reasoning=reason)
 
@@ -146,7 +145,7 @@ class VerifyVerdict:
 _JSON_OBJ_RE = re.compile(r"\{[^}]*\}", re.DOTALL)
 
 
-def _parse_verifier_response(raw: str) -> Optional[tuple[int, str]]:
+def _parse_verifier_response(raw: str) -> tuple[int, str] | None:
     """Extract (grade, reasoning) from the verifier's raw text.
 
     Tolerant: small models often wrap JSON in markdown fences or add
@@ -186,7 +185,7 @@ def _parse_verifier_response(raw: str) -> Optional[tuple[int, str]]:
 _verifier_cache: dict[str, BaseChatModel] = {}
 
 
-def _get_verifier(injected: Optional[BaseChatModel]) -> BaseChatModel:
+def _get_verifier(injected: BaseChatModel | None) -> BaseChatModel:
     """Resolve the verifier model. Tests inject a fake; prod lazily
     builds from settings.subagent_verifier_model or cheap_model."""
     if injected is not None:
@@ -210,7 +209,7 @@ async def verify_subagent_answer(
     *,
     brief: str,
     answer: str,
-    verifier_model: Optional[BaseChatModel] = None,
+    verifier_model: BaseChatModel | None = None,
 ) -> VerifyVerdict:
     """Grade the subagent's answer against the brief.
 
@@ -256,7 +255,7 @@ async def verify_subagent_answer(
     try:
         verifier = _get_verifier(verifier_model)
         response = await verifier.ainvoke(verifier_input)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional verifier must fail open
         # Catch broadly because verifier failures must not fail the
         # subagent. This is fail-open by design — see C2 commit body
         # for the "don't be too defensive too high in the stack"

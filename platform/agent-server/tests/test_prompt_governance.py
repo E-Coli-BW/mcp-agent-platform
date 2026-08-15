@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from app.agent.prompts import resolve_system_prompt
-from app.context.request_context import set_prompt_version
+from app.agent.execution_policy.system_prompts import resolve_system_prompt
 from app.config import settings
+from app.context.request_context import set_prompt_version
 
 
 def test_default_prompt_resolution(monkeypatch):

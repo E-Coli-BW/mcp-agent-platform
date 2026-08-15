@@ -111,7 +111,7 @@ class EvalResult:
 
 
 def heuristic_direct_routing(text: str) -> str:
-    from app.agent.tool_router import classify_for_direct_dispatch
+    from app.agent.tool_routing.direct_dispatch import classify_for_direct_dispatch
 
     call = classify_for_direct_dispatch(text)
     return call.tool_name if call is not None else "fallthrough"

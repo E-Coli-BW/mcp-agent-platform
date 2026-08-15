@@ -1,4 +1,4 @@
-"""C2 — Tool router: direct-dispatch for obvious one-tool queries.
+"""Conservative direct-dispatch classification for obvious read-only queries.
 
 When the user's message is clearly a one-tool read-only operation
 (e.g. "search my memory for X", "list files in /tmp", "read README.md"),
@@ -44,36 +44,14 @@ MEASUREMENT NOTE:
     Measure direct-routing rate, latency, and agreement on the labeled eval set
     before enabling this feature. Never auto-route writes or execution tools.
 
-GRAPH INTEGRATION (graph_v2.py):
-================================
-
-    START
-      │
-      ▼
-    inject_context
-      │
-      ▼
-    intent_router  ── (routed) ──► tools ──► track_errors ──► compress_history ──► call_llm ─► ...
-      │
-      └── (fallthrough) ──► call_llm ──► maybe_critique ──► route ──► [tools | call_llm | END]
-
-The router node returns either:
-    {}                                          # fallthrough → call_llm
-    {"messages": [AIMessage(tool_calls=[...])]} # dispatched → tools
-
-A conditional edge after intent_router checks "did the last message become
-an AIMessage with tool_calls?" and routes accordingly.
 """
 from __future__ import annotations
 
 import logging
 import re
-import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
-
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.tools import BaseTool
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +263,7 @@ def classify_for_direct_dispatch(text: str) -> RoutedCall | None:
             continue
         try:
             call = builder(m, text)
-        except Exception as e:  # pragma: no cover — defensive
+        except Exception as e:  # noqa: BLE001 - policy classifier fails closed
             logger.debug("router rule %s raised %s, falling through", rule_id, e)
             return None
         if call is None:
@@ -294,129 +272,3 @@ def classify_for_direct_dispatch(text: str) -> RoutedCall | None:
         logger.debug("router rule %s → %s(%s)", rule_id, call.tool_name, call.args)
         return call
     return None
-
-
-# ── Graph node ──────────────────────────────────────────────────────────
-
-
-def _find_latest_user_text(messages: list[BaseMessage]) -> str | None:
-    """Find the most recent HumanMessage content.
-
-    SKIPS 🪞-prefixed HumanMessages (C1 critique markers) — those are
-    never end-user input and must not be regex-classified.
-    """
-    for msg in reversed(messages):
-        if not isinstance(msg, HumanMessage):
-            continue
-        content = msg.content if isinstance(msg.content, str) else str(msg.content)
-        if content.startswith("🪞"):
-            continue
-        return content
-    return None
-
-
-def make_intent_router_node(tools: list[BaseTool]):
-    """Factory: creates the intent_router graph node.
-
-    Closure captures the list of tool names that are actually bound to
-    the agent. This is the second safety gate: even if a regex matches,
-    we won't dispatch a tool the agent doesn't have. Misconfigured
-    agents (e.g. one without memory tools) won't crash on a "search my
-    memory" prompt — they'll just fall through to the LLM.
-    """
-    # Resolve tool name → bound BaseTool once at build time.
-    tool_by_name = {t.name: t for t in tools if t.name in READ_ONLY_TOOL_ALLOWLIST}
-
-    if not tool_by_name:
-        logger.info(
-            "🚦 intent_router: NO allowlisted read-only tools bound; "
-            "router will always fall through to LLM"
-        )
-
-    async def intent_router(state: Any) -> dict[str, Any]:
-        # Feature flag check — read live setting each call so we can
-        # toggle without restarting the agent.
-        from app.config import settings as live_settings
-        if not getattr(live_settings, "direct_tool_routing_enabled", False):
-            return {}
-
-        # Don't route mid-conversation. The router is a fast-path for
-        # the FIRST hop of a turn; any later turn means the LLM is
-        # already engaged and the user might be following up on tool
-        # results. Heuristic: if the last message is anything other
-        # than a HumanMessage, we're mid-flow → fallthrough.
-        messages = list(state.messages)
-        if not messages or not isinstance(messages[-1], HumanMessage):
-            return {}
-
-        # Don't route on critique markers (C1).
-        text = _find_latest_user_text(messages)
-        if not text:
-            return {}
-        last_content = messages[-1].content if isinstance(messages[-1].content, str) else str(messages[-1].content)
-        if last_content.startswith("🪞"):
-            return {}
-
-        call = classify_for_direct_dispatch(text)
-        if call is None:
-            return {}
-
-        # Allowlist gate (defensive — classify_for_direct_dispatch only
-        # returns allowlisted names today, but enforce here too).
-        if call.tool_name not in READ_ONLY_TOOL_ALLOWLIST:
-            logger.warning(
-                "🚦 router rejected non-allowlisted tool %s (rule=%s)",
-                call.tool_name, call.rule_id,
-            )
-            return {}
-
-        # Tool-availability gate.
-        if call.tool_name not in tool_by_name:
-            logger.debug(
-                "🚦 router matched %s but tool not bound to agent; fallthrough",
-                call.tool_name,
-            )
-            return {}
-
-        # Synthesize an AIMessage with a tool call. The ToolNode
-        # downstream will execute it; then we route to call_llm so the
-        # actor sees the result and decides what to do next.
-        tool_call_id = f"router_{uuid.uuid4().hex[:12]}"
-        synthetic = AIMessage(
-            content="",
-            tool_calls=[{
-                "id": tool_call_id,
-                "name": call.tool_name,
-                "args": dict(call.args),  # defensive copy
-            }],
-            # Mark for observability so we can spot router-originated
-            # calls in traces and the dashboard.
-            additional_kwargs={"router_dispatched": True, "router_rule": call.rule_id},
-        )
-        logger.info(
-            "🚦 router → %s(%s) [rule=%s, tool_call_id=%s]",
-            call.tool_name, call.args, call.rule_id, tool_call_id,
-        )
-        return {"messages": [synthetic]}
-
-    return intent_router
-
-
-def route_after_intent_router(state: Any) -> str:
-    """Conditional edge after intent_router.
-
-    Returns:
-        "tools"    if the router dispatched a synthetic AIMessage with tool_calls
-        "call_llm" otherwise (fallthrough — normal LLM-driven flow)
-    """
-    messages = list(state.messages)
-    if not messages:
-        return "call_llm"
-    last = messages[-1]
-    if isinstance(last, AIMessage) and last.tool_calls:
-        # Only treat as router-dispatched if WE made it. Other AIMessages
-        # at the tail would be from a resumed session and we should not
-        # re-execute their tools here.
-        if last.additional_kwargs.get("router_dispatched"):
-            return "tools"
-    return "call_llm"

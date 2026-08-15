@@ -16,13 +16,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.agent.agent_graph.state import AgentState
-from app.agent.reflexion import (
+from app.agent.agent_graph.nodes.reflexion import (
     _find_last_assistant_answer,
     _find_last_user_question,
     _parse_critic_response,
     make_maybe_critique_node,
 )
+from app.agent.agent_graph.state import AgentState
 
 
 # ── _parse_critic_response: tolerant JSON extraction ───────────────────────

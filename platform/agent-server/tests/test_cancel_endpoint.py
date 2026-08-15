@@ -29,7 +29,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from app.agent import fleet_bus
+from app.agent.delegation import progress_bus as fleet_bus
 from app.config import settings
 
 

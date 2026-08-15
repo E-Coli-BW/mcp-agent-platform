@@ -56,3 +56,9 @@ async def run_full_evaluation() -> None:
     results_file.parent.mkdir(parents=True, exist_ok=True)
     results_file.write_text(json.dumps(all_results, indent=2))
     print(f"\nResults saved to {results_file}")
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(run_full_evaluation())

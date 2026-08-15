@@ -87,7 +87,7 @@ tools:
   # Meta-tool: delegate a focused subtask to a child agent. The child runs
   # with a narrowed tool subset and a hard token/wallclock budget shared
   # across the whole request. Use sparingly — most tasks are faster with
-  # a direct tool call. See app/agent/subagent.py for the policy envelope
+  # a direct tool call. See app/agent/delegation/governance.py for the policy envelope
   # (max depth, max fanout, budget enforcement).
   - spawn_subagent
 

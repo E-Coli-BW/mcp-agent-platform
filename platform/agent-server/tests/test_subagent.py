@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.agent.subagent_context import (
+from app.agent.delegation.governance import (
     DEFAULT_BUDGET_TOKENS,
     MAX_DEPTH_CEILING,
     MAX_FANOUT_CEILING,
@@ -264,7 +264,7 @@ class TestSpawnOrchestrator:
         back to the LLM. A raised exception would propagate as an opaque
         tool error; a structured result lets the LLM read 'depth limit
         exceeded — try smaller scope' and decide what to do."""
-        from app.agent.subagent import spawn_subagent
+        from app.agent.delegation.executor import spawn_subagent
 
         # No init → permissive default with EMPTY allowlist → spawn rejected
         result = await spawn_subagent(
@@ -284,7 +284,7 @@ class TestSpawnOrchestrator:
     async def test_should_propagateRoot_when_deepSpawnRejected(self):
         """A depth-MAX parent that tries to spawn gets a rejection result;
         the parent's own state must NOT be corrupted (no phantom fanout)."""
-        from app.agent.subagent import spawn_subagent
+        from app.agent.delegation.executor import spawn_subagent
 
         # Install a parent context that's already AT the depth ceiling.
         # Use the ContextVar directly (init_root_context always sets depth=0).
@@ -322,7 +322,7 @@ class TestSpawnOrchestrator:
         astream_events yields a synthetic event stream — same shape
         as LangGraph emits in production. This proves the orchestrator
         reads the right event fields without needing a real LLM."""
-        from app.agent import subagent as subagent_mod
+        import app.agent.delegation.executor as subagent_mod
 
         async def _fake_stream(state, config, version):
             # Mimic langgraph's astream_events output for one tool round
@@ -380,7 +380,7 @@ class TestSpawnOrchestrator:
         """If the child's stream takes longer than the remaining wallclock,
         we get back a SubagentResult with .error mentioning the deadline,
         and we DON'T crash the parent."""
-        from app.agent import subagent as subagent_mod
+        import app.agent.delegation.executor as subagent_mod
 
         async def _hang_forever(state, config, version):
             # asyncio.sleep instead of `while True` so the task is
@@ -422,7 +422,7 @@ class TestSpawnOrchestrator:
         """SubagentResult.format_for_llm must produce a string that
         starts with ✅/❌ and includes role + (when success) the answer.
         The LLM reads this directly, so format breakage = silent regression."""
-        from app.agent.subagent import SubagentResult
+        from app.agent.delegation.executor import SubagentResult
 
         success = SubagentResult(
             child_session_id="c",
@@ -490,7 +490,7 @@ class _FakeChunk:
 class TestSubagentPromptClauses:
     def test_subagent_prompt_includes_verbatim_quoting_rule(self):
         """The subagent system prompt must forbid paraphrasing identifiers."""
-        from app.agent.subagent import _build_subagent_system_prompt
+        from app.agent.delegation.executor import _build_subagent_system_prompt
         prompt = _build_subagent_system_prompt(role="file-reader", max_tool_calls=4)
         # Section heading exists.
         assert "VERBATIM" in prompt.upper()
@@ -503,13 +503,13 @@ class TestSubagentPromptClauses:
     def test_subagent_prompt_still_caps_tool_calls(self):
         """Regression: don't lose the existing max_tool_calls advertisement
         while editing the prompt."""
-        from app.agent.subagent import _build_subagent_system_prompt
+        from app.agent.delegation.executor import _build_subagent_system_prompt
         prompt = _build_subagent_system_prompt(role="x", max_tool_calls=7)
         assert "7 tool calls" in prompt
 
     def test_subagent_prompt_still_forbids_recursive_spawn(self):
         """Regression: the 'no grandchildren' rule must survive prompt edits."""
-        from app.agent.subagent import _build_subagent_system_prompt
+        from app.agent.delegation.executor import _build_subagent_system_prompt
         prompt = _build_subagent_system_prompt(role="x", max_tool_calls=4)
         assert "DO NOT spawn more subagents" in prompt
 
@@ -520,7 +520,10 @@ class TestSubagentPromptClauses:
         regressed Qwen2.5:7b's compliance with explicit user-format
         instructions. Keep parent prompts agnostic; the child prompt
         carries the discipline."""
-        from app.agent.prompts import SYSTEM_PROMPT_V1, SYSTEM_PROMPT_V2
+        from app.agent.execution_policy.system_prompts import (
+            SYSTEM_PROMPT_V1,
+            SYSTEM_PROMPT_V2,
+        )
         for prompt in (SYSTEM_PROMPT_V1, SYSTEM_PROMPT_V2):
             assert "spawn_subagent" not in prompt, (
                 "parent prompt has a spawn_subagent section — past evidence "

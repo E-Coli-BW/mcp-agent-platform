@@ -57,8 +57,7 @@ from dataclasses import dataclass, field
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agent.fleet_bus import is_cancelled, publish_event
-from app.agent.subagent_context import (
+from app.agent.delegation.governance import (
     SpawnRejected,
     SubagentContext,
     derive_child_context,
@@ -67,6 +66,7 @@ from app.agent.subagent_context import (
     record_fanout,
     subagent_context,
 )
+from app.agent.delegation.progress_bus import is_cancelled, publish_event
 from app.usage import estimate_tokens
 
 logger = logging.getLogger(__name__)
@@ -346,7 +346,7 @@ async def _maybe_verify_and_retry(
     """
     # Lazy import to keep module load cheap for the rejection-only
     # test path that never actually constructs a verifier.
-    from app.agent.subagent_verifier import (
+    from app.agent.delegation.answer_verification import (
         format_retry_brief,
         format_verifier_marker,
         verify_subagent_answer,

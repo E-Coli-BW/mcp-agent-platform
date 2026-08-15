@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agent import classifier_eval
+from app.agent.intent import evaluation
 
 
 class FailingAsyncClient:
@@ -19,19 +19,19 @@ class FailingAsyncClient:
 @pytest.mark.asyncio
 async def test_llm_classifiers_fall_back_to_heuristics(monkeypatch):
     monkeypatch.setattr(
-        classifier_eval.httpx,
+        evaluation.httpx,
         "AsyncClient",
         lambda **_kwargs: FailingAsyncClient(),
     )
 
-    assert await classifier_eval.llm_intent("what model are you using?") == "meta"
-    assert await classifier_eval.llm_topic_switch("continue", "JWT auth") == "continue"
+    assert await evaluation.llm_intent("what model are you using?") == "meta"
+    assert await evaluation.llm_topic_switch("continue", "JWT auth") == "continue"
 
 
 def test_direct_routing_evaluation_reports_labeled_set_metrics():
-    result = classifier_eval.evaluate_direct_routing_classifier()
+    result = evaluation.evaluate_direct_routing_classifier()
 
     assert result.task == "direct_routing"
-    assert result.total == len(classifier_eval.DIRECT_ROUTING_TEST_CASES)
+    assert result.total == len(evaluation.DIRECT_ROUTING_TEST_CASES)
     assert result.correct + len(result.errors) == result.total
     assert 0 <= result.accuracy <= 100

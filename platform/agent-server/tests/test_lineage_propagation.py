@@ -18,17 +18,16 @@ These tests are pure unit — they mock the httpx layer the same way
 ``test_auth_contract.py`` does so we never touch a network.
 """
 
-import pytest
-from contextvars import copy_context
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.tools.mcp_client import (
-    McpToolClient,
-    HEADER_ROOT_SESSION,
-    HEADER_PARENT_SESSION,
-    HEADER_DEPTH,
-)
+import pytest
 
+from app.tools.mcp_client import (
+    HEADER_DEPTH,
+    HEADER_PARENT_SESSION,
+    HEADER_ROOT_SESSION,
+    McpToolClient,
+)
 
 # ── Header name constants — wire-format contract ──────────────────────────
 
@@ -94,7 +93,7 @@ async def _call_and_capture_headers(client: McpToolClient, mock_http: AsyncMock)
 async def test_root_context_injects_all_three_headers():
     """A request initialized via init_root_context propagates root/parent/depth
     on every outbound tool call."""
-    from app.agent.subagent_context import init_root_context
+    from app.agent.delegation.governance import init_root_context
 
     # Run inside a fresh contextvars context so we don't leak the
     # SubagentContext into other tests (asyncio.run already does this for
@@ -119,7 +118,8 @@ async def test_child_context_injects_depth_and_immediate_parent():
     immediate parent — not the root — so the AuditAspect can draw the
     correct parent→child edge in the spawn tree."""
     from dataclasses import replace
-    from app.agent.subagent_context import init_root_context, subagent_context
+
+    from app.agent.delegation.governance import init_root_context, subagent_context
 
     init_root_context(
         root_session_id="chat-7",
@@ -166,7 +166,7 @@ async def test_no_context_omits_lineage_headers():
     # copy_context() gives us a frozen snapshot of the *current* context;
     # we want a FRESH context with no SubagentContext bound. The simplest
     # way is to clear the ContextVar explicitly.
-    from app.agent.subagent_context import subagent_context
+    from app.agent.delegation.governance import subagent_context
 
     token = subagent_context.set(None)  # type: ignore[arg-type]
     try:
@@ -186,7 +186,7 @@ async def test_no_context_omits_lineage_headers():
 async def test_lineage_headers_dont_collide_with_other_headers():
     """Sanity check: when all three header families are present (Content-Type,
     trace context placeholders, auth, lineage) they all survive."""
-    from app.agent.subagent_context import init_root_context
+    from app.agent.delegation.governance import init_root_context
 
     init_root_context(
         root_session_id="chat-99",

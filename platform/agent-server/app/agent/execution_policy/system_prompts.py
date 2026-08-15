@@ -151,7 +151,7 @@ def _parse_tenant_overrides(raw: str) -> dict[str, str]:
             for k, v in parsed.items()
             if isinstance(k, str) and isinstance(v, str)
         }
-    except Exception:
+    except json.JSONDecodeError:
         return {}
 
 

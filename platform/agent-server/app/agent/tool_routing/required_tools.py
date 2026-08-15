@@ -14,13 +14,28 @@ REQUIREMENTS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
         re.compile(
             r"\b(?:read|inspect|analy[sz]e|explain)\s+(?:this|the)\s+"
             r"(?:project|codebase|repository|repo)\b",
-            re.I,
+            re.IGNORECASE,
         ),
         ("file_search", "file_read"),
     ),
-    (re.compile(r"\b(run|execute|calculate|python|script)\b", re.I), ("code_run",)),
-    (re.compile(r"\b(remember|save|store|memorize)\b", re.I), ("memory_set",)),
-    (re.compile(r"\b(search|find|look up).*(memory|remembered)\b", re.I), ("memory_search",)),
+    (
+        re.compile(
+            r"\b(run|execute|calculate|python|script)\b",
+            re.IGNORECASE,
+        ),
+        ("code_run",),
+    ),
+    (
+        re.compile(r"\b(remember|save|store|memorize)\b", re.IGNORECASE),
+        ("memory_set",),
+    ),
+    (
+        re.compile(
+            r"\b(search|find|look up).*(memory|remembered)\b",
+            re.IGNORECASE,
+        ),
+        ("memory_search",),
+    ),
 )
 
 _INTERNAL_HUMAN_PREFIXES = ("🚨 STOP.", "⚠️ The previous tool call", "🪞")
@@ -39,7 +54,9 @@ def required_tools_for_agent(prompt: str, available_tools: set[str]) -> tuple[st
     if required:
         return tuple(tool for tool in required if tool in available_tools)
     if "rag_search" in available_tools and re.search(
-        r"\b(policy|return|refund|shipping|delivery|warranty|price|faq|what does)\b", prompt, re.I
+        r"\b(policy|return|refund|shipping|delivery|warranty|price|faq|what does)\b",
+        prompt,
+        re.IGNORECASE,
     ):
         return ("rag_search",)
     return ()
@@ -73,11 +90,13 @@ def missing_tool_requirement(messages: list[object], available_tools: set[str] |
         plugin_required = tuple(
             tool_name for tool_name in plugin_required if tool_name in available_tools
         )
-    if plugin_required:
-        if not artifact_registry.has_verified_artifact(user_prompt, tool_outputs):
-            unobserved = tuple(
-                tool_name for tool_name in plugin_required if tool_name not in observed
-            )
-            return unobserved or (plugin_required[-1],)
+    if plugin_required and not artifact_registry.has_verified_artifact(
+        user_prompt,
+        tool_outputs,
+    ):
+        unobserved = tuple(
+            tool_name for tool_name in plugin_required if tool_name not in observed
+        )
+        return unobserved or (plugin_required[-1],)
 
     return ()

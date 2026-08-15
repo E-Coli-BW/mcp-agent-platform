@@ -90,7 +90,7 @@ quality failures remain policy/eval inputs until a candidate passes its gate.
 ### Weak-Model Tool Contract
 
 For high-confidence explicit intents such as “run Python” or “remember this”,
-`app/agent/tool_contract.py` detects a required tool. If the model returns a
+`app/agent/tool_routing/required_tools.py` detects a required tool. If the model returns a
 plain answer without that tool, the graph performs one bounded structured-call
 retry and names the missing tool. Ambiguous requests still fall through to the
 model; this is a control-plane guard, not an unconditional keyword router.

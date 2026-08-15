@@ -84,7 +84,7 @@ class SkillTriggerCache:
             entries = await _fetch_triggers_from_backend(tenant_id)
             self.put(tenant_id, entries)
             return entries
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - optional trigger catalog fails open
             logger.warning("Failed to load skill triggers: %s", e)
             return []
 
@@ -285,6 +285,6 @@ async def _fetch_skill_body(tenant_id: str, key: str) -> str | None:
         raw = await client.call_tool("skill_get", {"key": key}, tenant_id=tenant_id)
         if raw:
             return raw if isinstance(raw, str) else str(raw)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional skill body fetch fails open
         logger.warning("Failed to fetch skill body for %s: %s", key, e)
     return None

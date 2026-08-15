@@ -7,7 +7,6 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.api.auth_proxy import router as auth_proxy_router
 from app.api.chat import router as chat_router
@@ -48,7 +47,7 @@ async def lifespan(app: FastAPI):
         from app.middleware.jwt_auth import prewarm_jwks
         auth_url = os.environ.get("AUTH_SERVICE_URL", "http://localhost:8090")
         await prewarm_jwks(auth_url)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional startup prewarm fails open
         logger.warning("JWKS prewarm skipped: %s", e)
 
     # Register builtin tools
@@ -56,7 +55,7 @@ async def lifespan(app: FastAPI):
         from app.registry.tool_registry import register_all_builtins
 
         register_all_builtins()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - startup reports registry failure
         logger.warning("Tool registry init failed: %s", e)
 
     # Load plugins
@@ -65,7 +64,7 @@ async def lifespan(app: FastAPI):
 
         plugins_dir = os.environ.get("AGENT_PLUGINS_DIR", "plugins")
         load_plugins(plugins_dir)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional plugins fail open
         logger.warning("Plugin loading failed: %s", e)
 
     # Start config watcher
@@ -78,7 +77,7 @@ async def lifespan(app: FastAPI):
     try:
         from app.registry.watcher import watch_configs
         asyncio.create_task(watch_configs(settings.agent_config_dir, on_config_change))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional watcher fails open
         logger.warning("Config watcher failed to start: %s", e)
 
     yield
@@ -187,7 +186,10 @@ async def metrics():
 @app.get("/api/prompts")
 async def prompts_info():
     """Prompt version registry — available versions, canary config, tenant overrides."""
-    from app.agent.prompts import _prompt_registry, _parse_tenant_overrides
+    from app.agent.execution_policy.system_prompts import (
+        _parse_tenant_overrides,
+        _prompt_registry,
+    )
     registry = _prompt_registry()
     overrides = _parse_tenant_overrides(settings.prompt_tenant_versions_json)
     return {

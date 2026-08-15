@@ -1,6 +1,6 @@
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.agent.tool_contract import (
+from app.agent.tool_routing.required_tools import (
     missing_tool_requirement,
     required_tools,
     required_tools_for_agent,

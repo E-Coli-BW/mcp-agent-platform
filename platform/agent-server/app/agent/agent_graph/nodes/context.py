@@ -43,7 +43,7 @@ async def inject_context_node(state: AgentState) -> dict[str, Any]:
 
     async def load_skills() -> str:
         try:
-            from app.agent.skills_index import build_skill_catalog_block
+            from app.agent.skills.catalog import build_skill_catalog_block
             from app.auth.middleware import tenant_context
 
             return await build_skill_catalog_block(tenant_context.get() or "default")

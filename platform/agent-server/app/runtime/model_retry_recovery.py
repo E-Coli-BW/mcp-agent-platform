@@ -58,7 +58,7 @@ async def resume_model_retry_run(
     store: SQLiteCheckpointStore,
 ) -> ModelRetryResumeResult:
     """Resume the pending call_llm node after a claimed waiting checkpoint."""
-    from app.agent.subagent_context import init_root_context
+    from app.agent.delegation.governance import init_root_context
     from app.middleware.session_lane import release_session_lock, wait_for_session_lock
     from app.registry.tool_registry import get_registered_tools
     from app.runtime.cancellation import get_run_cancellation_registry

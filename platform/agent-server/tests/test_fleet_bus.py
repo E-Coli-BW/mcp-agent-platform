@@ -15,14 +15,12 @@ Run:
 from __future__ import annotations
 
 import asyncio
-import time
 from unittest.mock import MagicMock
 
 import pytest
 
-from app.agent import fleet_bus
-from app.agent.subagent_context import (
-    SubagentContext,
+from app.agent.delegation import progress_bus as fleet_bus
+from app.agent.delegation.governance import (
     init_root_context,
     subagent_context,
 )
@@ -236,7 +234,7 @@ class TestSubagentStreaming:
     async def test_should_publishEvents_when_childStreamsTokens(
         self, root_ctx, monkeypatch
     ):
-        from app.agent import subagent as subagent_mod
+        import app.agent.delegation.executor as subagent_mod
 
         async def _fake_stream(state, config, version):
             yield {
@@ -321,13 +319,12 @@ class TestSubagentStreaming:
         error='cancelled by parent', AND publish a child_cancelled event
         (not child_end) so subscribers can distinguish completion from
         abort."""
-        from app.agent import subagent as subagent_mod
+        import app.agent.delegation.executor as subagent_mod
 
         # Set the cancel flag for ANY child id we're about to spawn.
         # Because the child id is random (sub-{uuid8}), we monkeypatch
         # uuid in the spawn module to give us a deterministic id.
         deterministic_id = "deadbeef"
-        import uuid as uuid_mod
         class _FakeUUID:
             hex = deterministic_id + "0000000000000000000000000000"
         monkeypatch.setattr(
@@ -406,7 +403,7 @@ class TestSubagentStreaming:
         harness, unit tests that don't care about streaming) must still
         produce a valid result. This is the back-compat property — the
         majority of existing tests don't register a bus."""
-        from app.agent import subagent as subagent_mod
+        import app.agent.delegation.executor as subagent_mod
 
         async def _fake_stream(state, config, version):
             yield {"event": "on_chat_model_stream",

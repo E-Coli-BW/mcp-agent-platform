@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.agent.fleet_bus import request_cancel as fleet_request_cancel
+from app.agent.delegation.progress_bus import request_cancel as fleet_request_cancel
 from app.auth.middleware import AuthContext, require_auth, tenant_context
 from app.config import settings
 from app.context.request_context import set_request_context

@@ -1,6 +1,9 @@
 from types import SimpleNamespace
 
-from app.agent.runtime_profile import INVARIANT_POLICY, resolve_runtime_profile
+from app.agent.execution_policy.runtime_profiles import (
+    INVARIANT_POLICY,
+    resolve_runtime_profile,
+)
 
 
 def test_profile_bounds_model_adaptive_autonomy():
