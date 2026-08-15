@@ -1,6 +1,6 @@
 # Current Platform Architecture
 
-> Updated 2026-07-31. This is the source of truth for the implemented local stack.
+> Updated 2026-08-15. This is the source of truth for the implemented local stack.
 
 ## System View
 
@@ -9,8 +9,11 @@ flowchart LR
   U[User] --> FE[React frontend\nagent switcher + chat + IDE]
   FE -->|GET /api/agents| API[Agent Server]
   FE -->|POST /v1/chat/completions| API
-  API --> CFG[Agent YAML registry\nidentity prompt tools routing]
-  API --> GRAPH[LangGraph runtime]
+  API --> RUN[Runtime shell\nRunCoordinator]
+  RUN --> ENG[AgentEngine]
+  ENG --> CFG[Engine registry/cache\nYAML + tenant + prompt]
+  CFG --> GRAPH[Modular agent_graph]
+  GRAPH -.-> CAP[Capability packages\npolicy / routing / compressor\nmodel / skills / delegation]
   GRAPH --> LLM[Ollama / model gateway]
   GRAPH --> TOOLS[Tool registry]
   TOOLS --> MCP[MCP services\nmemory / filesearch / codeexec]
@@ -19,7 +22,8 @@ flowchart LR
   RET --> CE[Optional cross-encoder reranker]
   RET --> IDX[Per-tenant index\nNumPy disk or Redis HNSW]
   IDX --> EMB[Ollama embeddings]
-  GRAPH --> RT[Runtime control plane]
+  RUN --> RT[Runtime control plane]
+  RUN --> OBS[Observers\nusage / provenance / Kafka / RAG feedback]
   RT --> EVENTS[Durable event log]
   RT --> APPROVAL[Approval store + policy gate]
   RT --> CP[LangGraph checkpoint]
@@ -31,35 +35,23 @@ flowchart LR
 ### Portable ASCII View
 
 ```text
-                          +----------------------+
-                          | User / Browser        |
-                          +----------+-----------+
-                                     |
-                          +----------v-----------+
-                          | React Frontend       |
-                          | chat / IDE / switcher |
-                          +----------+-----------+
-                                     |
-                  +------------------v------------------+
-                  | Agent Server                         |
-                  | /api/agents + /v1/chat/completions   |
-                  +----+----------------------+----------+
-                       |                      |
-              +--------v--------+    +--------v---------+
-              | YAML Agent       |    | LangGraph Runtime |
-              | registry         |    | model + tools     |
-              +------------------+    +----+---------+----+
-                                            |         |
-                              +-------------v-+   +---v----------------+
-                              | MCP tools      |   | Runtime control     |
-                              | memory         |   | events / approval   |
-                              | filesearch     |   | checkpoint / resume |
-                              | codeexec       |   +---------+-----------+
-                              +----------------+             |
-                                                         +----v-----+
-                                                         | SQLite    |
-                                                         | dev store |
-                                                         +----------+
+Browser -> React -> FastAPI protocol adapters
+         |
+         v
+      Runtime shell: RunCoordinator
+    runs/events | policy/approval | recovery | observers
+         |
+         v
+    AgentEngine -> registry/cache -> modular agent_graph
+               |
+   execution_policy | tool_routing | compressor | model
+         skills | delegation
+               |
+         model providers + authorized tools
+               |
+        local / RAG / Java MCP backends
+               |
+     SQLite dev store / Redis / Postgres / Kafka
 
        RAG tool path from LangGraph:
 
@@ -114,41 +106,49 @@ switch does not merge graph context across agents.
 sequenceDiagram
   participant UI as Frontend
   participant API as Chat API
+  participant R as RunCoordinator
+  participant E as AgentEngine
   participant G as LangGraph
-  participant R as Runtime store
+  participant S as Runtime store
   participant T as Tool
   UI->>API: chat(model, session_id, stream=true)
-  API->>G: invoke with agent config
-  G->>R: run/event/tool invocation
+  API->>R: RuntimeTurnRequest
+  R->>S: start run + ordered event
+  R->>E: stream turn
+  E->>G: resolve cached graph + invoke
   G->>T: execute tool
   T-->>G: result or approval_required
-  G->>R: checkpoint + ordered events
-  API-->>UI: SSE status/tool_start/tool_end/content
+  G-->>E: engine events
+  E-->>R: engine event stream
+  R->>S: run/tool/model events
+  R-->>API: RuntimeStreamEvent
+  API-->>UI: OpenAI SSE projection
   UI-->>API: approve or resume
-  API->>R: lease invocation and reattach checkpoint
-  API->>T: resume approved tool
+  API->>R: resume request
+  R->>S: claim lease + recover checkpoint
+  R->>E: resume pending graph node
+  R-->>API: completed runtime event
+  API-->>UI: final SSE
 ```
 
 ### Portable Recovery Flow
 
 ```text
-  Browser            Chat API             LangGraph             Runtime Store
-     |                  |                    |                       |
-     |-- chat ---------->|                    |                       |
-     |                  |-- invoke --------->|                       |
-     |                  |                    |-- event/tool -------->|
-     |                  |                    |<-- result ------------|
-     |<-- SSE events ----|<-------------------|                       |
-     |                  |                    |                       |
-     |                  |                    |-- approval_required -->|
-     |<-- approval UI ---|<-------------------|                       |
-     |-- approve/resume->|                    |                       |
-     |                  |-- lease + reattach ----------------------->|
-     |                  |-- resume ---------->|                       |
-     |<-- final SSE -----|<-------------------|-- completed ----------|
+  Browser      Chat API      RunCoordinator      AgentEngine       Runtime Store
+     |             |               |                  |                 |
+     |-- chat ---->|               |                  |                 |
+     |             |-- request --->|-- start run --------------------->|
+     |             |               |-- stream turn -->|                 |
+     |             |               |<-- engine events-|                 |
+     |             |               |-- ordered events ---------------->|
+     |<-- SSE ------|<-- runtime ---|                  |                 |
+     |-- resume --->|-------------->|-- claim lease ------------------->|
+     |             |               |-- resume graph ->|                 |
+     |<-- final SSE-|<--------------|<-- completed ----|                 |
 ```
 
-The event log is the runtime observability surface. LangGraph checkpoint owns
+The event log is the runtime observability surface. Optional observers consume
+runtime observations without owning execution outcomes. LangGraph checkpoint owns
 execution state; conversation history and long-term memory remain separate
 stores with different ownership. SQLite is the development durability path.
 

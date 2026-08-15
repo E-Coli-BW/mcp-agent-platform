@@ -36,6 +36,24 @@ become useful.
 
 ## 3. Target Tree
 
+### Execution Ownership
+
+```text
+API adapters
+  |
+Runtime shell (RunCoordinator + platform capabilities + observers)
+  |
+AgentEngine (stable execution contract)
+  |
+registry/cache -> agent_graph
+          |
+   execution_policy | tool_routing | compressor
+   model | skills | delegation
+```
+
+Dependencies point downward. Platform observers sit beside the coordinator and
+cannot change Agent execution outcomes.
+
 ```text
 app/agent/
   __init__.py

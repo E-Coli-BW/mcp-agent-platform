@@ -1,6 +1,8 @@
 # Agent Runtime Boundary Refactor
 
 > Status: complete. Phases 1-4 accepted and implemented; refactor closed.
+> Historical migration record. For the implemented system, see
+> `CURRENT-ARCHITECTURE.md` and `AGENT-PACKAGE-ORGANIZATION.md`.
 > Created: 2026-08-14.
 > Scope owner: `platform/agent-server`.
 >

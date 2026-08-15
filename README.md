@@ -4,30 +4,28 @@ A full-stack **Agent runtime platform** built for learning and demonstrating dis
 
 ## Architecture
 
+```text
+React frontend
+	|
+FastAPI protocol adapters (OpenAI HTTP/SSE)
+	|
+Runtime shell
+  RunCoordinator | durable runs/events | policy/approval | recovery
+  observers: usage | model provenance | Kafka | retrieval feedback
+	|
+AgentEngine -> Agent registry/cache -> modular agent_graph
+	|
+Agent capabilities
+  execution_policy | tool_routing | compressor | model | skills | delegation
+	|
+Tool authorization -> local tools / RAG / Java MCP services
+	|
+PostgreSQL | Redis | Kafka | Docker sandbox | Ollama/model providers
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     Frontend (React)                      │
-├─────────────────────────────────────────────────────────┤
-│              Python Agent Server (FastAPI + LangGraph)    │
-│   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │
-│   │  ReAct   │ │  Intent  │ │ Reflexion│ │ Sub-agent│  │
-│   │  Agent   │ │  Router  │ │  Loop    │ │ Orchestr │  │
-│   └──────────┘ └──────────┘ └──────────┘ └──────────┘  │
-├─────────────────────────────────────────────────────────┤
-│              Java Microservices (Spring Boot 3)           │
-│   ┌──────┐ ┌────────┐ ┌──────────┐ ┌───────┐ ┌──────┐ │
-│   │ Auth │ │ Memory │ │ Code Exec│ │Model  │ │File  │ │
-│   │Service│ │ Server │ │  Server  │ │Router │ │Search│ │
-│   └──────┘ └────────┘ └──────────┘ └───────┘ └──────┘ │
-├─────────────────────────────────────────────────────────┤
-│         TypeScript MCP Servers (stdio protocol)          │
-│   ┌──────────────┐  ┌──────────────────┐               │
-│   │ memory-store │  │ local-file-search │               │
-│   └──────────────┘  └──────────────────┘               │
-├─────────────────────────────────────────────────────────┤
-│   PostgreSQL  │  Redis  │  Kafka  │  Docker (sandbox)   │
-└─────────────────────────────────────────────────────────┘
-```
+
+The Agent core does not own HTTP, SSE, Kafka, authentication, or durable run
+operations. Those capabilities compose around `AgentEngine` in the runtime
+shell.
 
 ## Tech Stack
 
@@ -96,7 +94,7 @@ docker-compose -f platform/docker-compose.yml up -d
 
 ```
 ├── platform/
-│   ├── agent-server/        # Python: FastAPI + LangGraph ReAct agent
+│   ├── agent-server/        # Python: API/runtime shell + modular AgentEngine
 │   ├── agent-server-java/   # Java: Spring AI ChatClient (same API)
 │   ├── agent-sdk/           # Python: Plugin toolkit (@tool, ToolContext)
 │   ├── auth-service/        # Java: RS256 JWT auth + JWKS + policy ACM

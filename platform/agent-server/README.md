@@ -220,12 +220,26 @@ The complete state and safety contract is documented in
 ```
 FastAPI (OpenAI-compatible API) → http://localhost:8500
   ↓
-LangGraph ReAct Agent (PLAN → ACT → SUMMARIZE)
-  ↓ lossless checkpoint (raw messages + typed investigation state)
-  ↓ _build_llm_view (ephemeral compression + workspace/skills + hard budget)
-  ↓ tool authorization gate (allow / deny / approval before side effects)
-  ↓ verified artifact plugin hook (optional; fail-open to the normal LLM path)
-  ↓ model routing (simple→cheap, complex→strong)
+Runtime shell (`app/runtime`)
+  ├── RunCoordinator: session lane, cancellation, run lifecycle
+  ├── durable events, approvals, retries, idempotency, recovery
+  └── observers: usage, provenance, Kafka, retrieval feedback
+  ↓
+AgentEngine (`app/agent/engine`)
+  ↓ registry/cache resolves YAML AgentConfig + prompt version + tenant
+Modular StateGraph (`app/agent/agent_graph`)
+  ├── lossless checkpoint (raw messages + typed investigation state)
+  ├── ephemeral model view (compression + workspace/skills + hard budget)
+  ├── tool authorization gate before side effects
+  └── verified artifact hook (optional; fail-open to the normal LLM path)
+  ↓
+Capability packages
+  ├── execution_policy: prompt governance + bounded runtime profiles
+  ├── tool_routing: direct-dispatch and required-tool policies
+  ├── compressor: model-view budgets + durable investigation facts
+  ├── model: provider construction, fallback, request recovery
+  ├── skills: catalog and dormant trigger policy
+  └── delegation: child execution, governance, verification, progress bus
   ↓
 Tools (15) → Java MCP Backends (optional)
   ├── memory-server:8180 (memory_search, memory_set, memory_context)
@@ -235,6 +249,7 @@ Tools (15) → Java MCP Backends (optional)
 
 Features:
   ├── Named SSE events (tool_start, tool_end, status)
+  ├── Stable Engine boundary independent of FastAPI/SSE
   ├── Declarative YAML agent configs (agents/coding-agent.yaml)
   ├── Config hot-reload (watchfiles / polling fallback)
   ├── Session LANE (Redis lock prevents concurrent request interleaving)

@@ -15,3 +15,6 @@
 tmp/
 *.pyc
 __pycache__/
+
+# Local one-off history rewrite utility; never commit it again.
+/rebuild-history.sh

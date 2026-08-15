@@ -3,6 +3,9 @@
 > Status: public architecture baseline, created 2026-07-31.
 > Scope: document the current runtime shape, identify split-brain areas, and define
 > small reversible improvements before larger refactors.
+>
+> Historical roadmap. The current source of truth is
+> `design/CURRENT-ARCHITECTURE.md`.
 
 ## 1) Why This Exists
 
