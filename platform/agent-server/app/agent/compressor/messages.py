@@ -11,6 +11,8 @@ from app.agent.compressor.investigation import InvestigationState, _extract_skil
 
 logger = logging.getLogger(__name__)
 
+_RECENT_TOOL_OUTPUT_MAX_CHARS = 1_200
+
 
 @dataclass(frozen=True)
 class CompressionResult:
@@ -90,6 +92,36 @@ def compress_messages(
 
     facts_messages = _investigation_messages(investigation)
     result = head + facts_messages + compressed_middle + tail
+    if estimate_chars(result) > budget_chars:
+        compacted_tail = []
+        compacted_recent = 0
+        for message in tail:
+            if isinstance(message, ToolMessage):
+                content = (
+                    message.content
+                    if isinstance(message.content, str)
+                    else str(message.content)
+                )
+                if len(content) > _RECENT_TOOL_OUTPUT_MAX_CHARS:
+                    omitted = len(content) - _RECENT_TOOL_OUTPUT_MAX_CHARS
+                    message = ToolMessage(
+                        id=message.id,
+                        content=(
+                            content[:_RECENT_TOOL_OUTPUT_MAX_CHARS]
+                            + f"\n[...{omitted} recent tool-output chars truncated]"
+                        ),
+                        tool_call_id=message.tool_call_id,
+                        name=message.name,
+                        status=getattr(message, "status", None),
+                    )
+                    compacted_recent += 1
+            compacted_tail.append(message)
+        if compacted_recent:
+            summary_lines.append(
+                f"[compacted {compacted_recent} recent tool output(s)]"
+            )
+            tail = compacted_tail
+            result = head + facts_messages + compressed_middle + tail
     while estimate_chars(result) > budget_chars and compressed_middle:
         dropped = compressed_middle.pop(0)
         content = (

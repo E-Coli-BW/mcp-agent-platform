@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -14,6 +16,95 @@ def reset_agent_registry():
 
 
 class TestPromptGovernedAgentCache:
+    @pytest.mark.asyncio
+    async def test_runtime_profile_change_rebuilds_configured_graph(self, monkeypatch):
+        import app.agent.agent_graph.factory as graph_factory
+        import app.registry.config_loader as config_loader_mod
+        from app.agent.engine.registry import get_agent_registry
+
+        config = SimpleNamespace(
+            id="coding-agent",
+            model="qwen2.5:7b",
+            prompt="prompt",
+            tools=["file_read", "spawn_subagent"],
+            guardrails={},
+            routing={},
+            knowledge={},
+            runtime={"allow_subagents": False},
+        )
+        built = []
+
+        def fake_create_agent(active_config, temperature=None):
+            agent = object()
+            built.append(agent)
+            return agent
+
+        monkeypatch.setattr(
+            graph_factory,
+            "create_agent_v2_from_config",
+            fake_create_agent,
+        )
+        monkeypatch.setattr(
+            config_loader_mod,
+            "load_all_configs",
+            lambda _directory: {"coding-agent": config},
+        )
+
+        registry = get_agent_registry()
+        first = await registry.get_agent("coding-agent", temperature=0.0)
+        config.runtime = {"allow_subagents": True}
+        second = await registry.get_agent("coding-agent", temperature=0.0)
+
+        assert first is not second
+        assert len(built) == 2
+
+    @pytest.mark.asyncio
+    async def test_removing_config_rebuilds_as_fallback_graph(self, monkeypatch):
+        import app.agent.agent_graph.factory as graph_factory
+        import app.registry.config_loader as config_loader_mod
+        import app.tools.definitions as tool_definitions
+        from app.agent.engine.registry import get_agent_registry
+
+        config = SimpleNamespace(
+            id="coding-agent",
+            model="qwen2.5:7b",
+            prompt="prompt",
+            tools=["file_read"],
+            guardrails={},
+            routing={},
+            knowledge={},
+            runtime={},
+        )
+        configs = {"coding-agent": config}
+        configured = object()
+        fallback = object()
+        tool = SimpleNamespace(name="file_read")
+
+        monkeypatch.setattr(
+            graph_factory,
+            "create_agent_v2_from_config",
+            lambda *_args, **_kwargs: configured,
+        )
+        monkeypatch.setattr(
+            graph_factory,
+            "create_agent_v2",
+            lambda *_args, **_kwargs: fallback,
+        )
+        monkeypatch.setattr(
+            config_loader_mod,
+            "load_all_configs",
+            lambda _directory: configs,
+        )
+        monkeypatch.setattr(tool_definitions, "get_tools", lambda: [tool])
+
+        registry = get_agent_registry()
+        first = await registry.get_agent("coding-agent", temperature=0.0)
+        configs.clear()
+        second = await registry.get_agent("coding-agent", temperature=0.0)
+
+        assert first is configured
+        assert second is fallback
+
     @pytest.mark.asyncio
     async def test_prompt_version_isolation_in_cache(self, monkeypatch):
         import app.agent.agent_graph.factory as graph_factory

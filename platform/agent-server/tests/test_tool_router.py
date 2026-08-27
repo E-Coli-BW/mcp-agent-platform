@@ -210,6 +210,18 @@ class TestIntentRouterNode:
         assert msg.additional_kwargs.get("router_rule") == "memory_search.basic"
 
     @pytest.mark.asyncio
+    async def test_profile_override_can_enable_routing(self):
+        node = make_intent_router_node(
+            [_fake_tool("file_read")],
+            enabled=True,
+        )
+        state = AgentState(messages=[HumanMessage(content="read README.md")])
+
+        result = await node(state)
+
+        assert result["messages"][0].tool_calls[0]["name"] == "file_read"
+
+    @pytest.mark.asyncio
     async def test_should_fallthrough_when_toolNotBound(self, _enable_routing):
         """A misconfigured agent (no memory tools) shouldn't crash —
         it should just behave as if routing were off for that query."""

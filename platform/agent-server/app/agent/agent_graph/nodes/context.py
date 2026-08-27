@@ -31,11 +31,10 @@ async def inject_context_node(state: AgentState) -> dict[str, Any]:
             from app.context.workspace import get_workspace_context
             from app.tools.agent_mode import get_workspace_root
 
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None,
+            workspace_root = get_workspace_root()
+            return await asyncio.to_thread(
                 get_workspace_context,
-                get_workspace_root(),
+                workspace_root,
             )
         except Exception as error:  # noqa: BLE001 - optional context boundary
             logger.debug("Workspace context unavailable: %s", error)
@@ -74,12 +73,13 @@ async def inject_context_node(state: AgentState) -> dict[str, Any]:
 
 
 def reset_turn_state_node(state: AgentState) -> dict[str, Any]:
-    """Reset request-scoped counters without touching checkpointed context."""
+    """Reset request-scoped counters and refresh mutable workspace context."""
     return {
         "loop_counter": 0,
         "consecutive_errors": 0,
         "critique_attempts": 0,
         "compression_summary": "",
+        "workspace_context": "",
     }
 
 
@@ -104,10 +104,19 @@ def _truncate_optional_context(context: str, max_chars: int) -> str:
     return context[: max_chars - len(marker)] + marker
 
 
-def _build_llm_view(state: AgentState, system_prompt: str) -> LlmMessageView:
+def _build_llm_view(
+    state: AgentState,
+    system_prompt: str,
+    max_context_chars: int | None = None,
+) -> LlmMessageView:
     """Build an ephemeral, fully budgeted message view for the model."""
     messages = list(state.messages)
-    max_chars = max(0, int(settings.max_context_chars))
+    configured_max_chars = (
+        settings.max_context_chars
+        if max_context_chars is None
+        else max_context_chars
+    )
+    max_chars = max(0, int(configured_max_chars))
 
     optional_context = ""
     if state.skills_catalog:

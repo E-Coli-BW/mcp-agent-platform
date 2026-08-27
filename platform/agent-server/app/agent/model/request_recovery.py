@@ -36,6 +36,7 @@ class ModelRetryPolicy:
     max_delay_ms: int = 10_000
     jitter_ratio: float = 0.1
     lease_seconds: int = 120
+    timeout_seconds: float = 60
 
     def __post_init__(self) -> None:
         if not 0 <= self.max_retries <= 10:
@@ -48,6 +49,8 @@ class ModelRetryPolicy:
             raise ValueError("model retry jitter_ratio must be between 0 and 1")
         if self.lease_seconds < 1:
             raise ValueError("model retry lease_seconds must be positive")
+        if self.timeout_seconds <= 0:
+            raise ValueError("model request timeout_seconds must be positive")
 
 
 class EmptyModelResponseError(RuntimeError):
@@ -76,6 +79,7 @@ def policy_from_settings(settings: Any) -> ModelRetryPolicy:
         max_delay_ms=int(settings.model_retry_max_delay_ms),
         jitter_ratio=float(settings.model_retry_jitter_ratio),
         lease_seconds=max(60, int(settings.llm_timeout) + 30),
+        timeout_seconds=float(settings.llm_timeout),
     )
 
 
@@ -92,6 +96,11 @@ class ModelRetryFingerprintError(RuntimeError):
 
     terminal_reason = "model_retry_fingerprint_mismatch"
     retryable = False
+
+
+def model_retry_lease_owner(run_id: str) -> str:
+    """Return the process-scoped owner used by API and graph recovery."""
+    return f"model:{os.getpid()}:{run_id}"
 
 
 @dataclass
@@ -121,7 +130,7 @@ class _DurableRetry:
 
         store = get_checkpoint_store()
         fingerprint = _request_fingerprint(messages, context)
-        owner = f"model:{os.getpid()}:{context.run_id}"
+        owner = model_retry_lease_owner(context.run_id)
         checkpoint = store.get(context.run_id)
         if checkpoint is not None and checkpoint.state == "model_retry_executing":
             if checkpoint.payload.get("kind") != "model_retry":
@@ -133,7 +142,7 @@ class _DurableRetry:
                     "resumed model request does not match its durable checkpoint"
                 )
             if (
-                checkpoint.lease_owner is None
+                checkpoint.lease_owner != owner
                 or checkpoint.lease_expires_at is None
                 or checkpoint.lease_expires_at < time.time()
             ):
@@ -190,6 +199,7 @@ class _DurableRetry:
                     "retry_after_ms": failure.retry_after_ms,
                 },
             },
+            owner=self.owner,
         )
         if checkpoint is None:
             raise ModelRetryLeaseLostError("model retry checkpoint disappeared")
@@ -217,6 +227,7 @@ class _DurableRetry:
         checkpoint = self.store.transition(
             self.run_id,
             state="model_retry_executing",
+            owner=self.owner,
         )
         if checkpoint is None:
             raise ModelRetryLeaseLostError("model retry checkpoint disappeared")
@@ -227,12 +238,13 @@ class _DurableRetry:
             state="completed",
             payload={"completed_at": time.time()},
             clear_lease=True,
+            owner=self.owner,
         )
         if checkpoint is None:
             raise ModelRetryLeaseLostError("model retry checkpoint disappeared")
 
     def fail(self, failure: ModelFailure, attempts: int) -> None:
-        self.store.transition(
+        checkpoint = self.store.transition(
             self.run_id,
             state="failed",
             payload={
@@ -244,7 +256,10 @@ class _DurableRetry:
                 },
             },
             clear_lease=True,
+            owner=self.owner,
         )
+        if checkpoint is None:
+            raise ModelRetryLeaseLostError("model retry checkpoint disappeared")
 
 
 def _request_fingerprint(messages: Sequence[BaseMessage], context: Any) -> str:
@@ -393,7 +408,8 @@ async def invoke_with_model_retry(
     for attempt in range(attempts_failed, policy.max_retries + 1):
         started_at = time.monotonic()
         try:
-            response = await model.ainvoke(messages)
+            async with asyncio.timeout(policy.timeout_seconds):
+                response = await model.ainvoke(messages)
             if not isinstance(response, AIMessage):
                 raise TypeError(f"chat model returned {type(response).__name__}, expected AIMessage")
             validated = validate_model_response(response)
@@ -401,7 +417,15 @@ async def invoke_with_model_retry(
                 durable.complete()
             return validated
         except Exception as error:
-            failure = classify_model_error(error)
+            failure = (
+                ModelFailure(
+                    "TIMEOUT",
+                    f"model request exceeded {policy.timeout_seconds:g}s",
+                    False,
+                )
+                if isinstance(error, (asyncio.TimeoutError, TimeoutError))
+                else classify_model_error(error)
+            )
             await _record(
                 "model_attempt_failed",
                 {

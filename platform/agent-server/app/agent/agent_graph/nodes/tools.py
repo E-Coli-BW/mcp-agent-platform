@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
 from app.agent.agent_graph.state import AgentState
+from app.agent.tool_routing.required_tools import tool_message_is_error
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +59,7 @@ def make_error_tracking_node():
 
         has_error = False
         for message in recent_tool_messages:
-            if getattr(message, "status", None) == "error":
-                has_error = True
-                break
-            content = (
-                message.content
-                if isinstance(message.content, str)
-                else str(message.content)
-            )
-            if content.startswith("❌"):
+            if tool_message_is_error(message):
                 has_error = True
                 break
 

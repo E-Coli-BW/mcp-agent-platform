@@ -19,7 +19,11 @@ from app.agent.agent_graph.nodes.context import (
     reset_turn_state_node,
     update_investigation_node,
 )
-from app.agent.agent_graph.nodes.model import _deduplicate_tool_calls
+from app.agent.agent_graph.nodes.model import (
+    _deduplicate_tool_calls,
+    _limit_tool_calls_to_budget,
+    _recover_read_only_text_tool_call,
+)
 from app.agent.agent_graph.nodes.tools import (
     _format_tool_error,
     make_error_tracking_node,
@@ -71,6 +75,28 @@ def test_build_agent_graph_uses_model_view_only_compression():
     assert "context_compressor" not in node_names
 
 
+def test_llm_view_honors_runtime_context_budget():
+    state = AgentState(messages=[HumanMessage(content="inspect the project")])
+
+    view = _build_llm_view(state, "system", max_context_chars=1_234)
+
+    assert view.budget_chars == 1_234
+    assert view.overflow is False
+
+
+def test_llm_view_is_append_only_while_under_budget():
+    first = HumanMessage(content="first turn")
+    answer = AIMessage(content="first answer")
+    follow_up = HumanMessage(content="second turn")
+    state = AgentState(messages=[first, answer, follow_up])
+
+    view = _build_llm_view(state, "stable system", max_context_chars=10_000)
+
+    assert view.messages[0].content == "stable system"
+    assert view.messages[1:] == [first, answer, follow_up]
+    assert view.compression_summary == ""
+
+
 def test_deduplicate_tool_calls_drops_exact_duplicates():
     response = AIMessage(
         content="",
@@ -99,6 +125,75 @@ def test_deduplicate_tool_calls_preserves_different_arguments():
     assert _deduplicate_tool_calls(response) is response
 
 
+def test_deduplicate_tool_calls_normalizes_read_paths():
+    response = AIMessage(
+        content="",
+        tool_calls=[
+            {"id": "one", "name": "file_read", "args": {"path": "monitor.go"}},
+            {"id": "two", "name": "file_read", "args": {"path": "./monitor.go"}},
+        ],
+    )
+
+    deduplicated = _deduplicate_tool_calls(response)
+
+    assert [call["id"] for call in deduplicated.tool_calls] == ["one"]
+
+
+def test_tool_burst_is_limited_to_remaining_turn_budget():
+    prior_calls = [
+        {"id": f"prior-{index}", "name": "file_read", "args": {"path": f"{index}.go"}}
+        for index in range(5)
+    ]
+    response = AIMessage(
+        content="",
+        tool_calls=[
+            {"id": f"next-{index}", "name": "file_read", "args": {"path": f"n{index}.go"}}
+            for index in range(8)
+        ],
+    )
+    messages = [
+        HumanMessage(content="inspect and document this project"),
+        AIMessage(content="", tool_calls=prior_calls),
+    ]
+
+    limited = _limit_tool_calls_to_budget(response, messages, max_tool_calls=12)
+
+    assert [call["id"] for call in limited.tool_calls] == [
+        f"next-{index}" for index in range(7)
+    ]
+    assert limited.additional_kwargs["tool_calls_dropped_for_budget"] == 1
+    assert len(response.tool_calls) == 8
+
+
+def test_recovers_qwen_read_only_text_tool_call():
+    response = AIMessage(
+        content=(
+            'portun\n{"name": "file_read", "arguments": '
+            '{"path": "./monitor.go", "start_line": 1, "end_line": 100}}\n'
+            "</tool_call>"
+        )
+    )
+
+    recovered = _recover_read_only_text_tool_call(response, {"file_read"})
+
+    assert recovered.content == ""
+    assert recovered.tool_calls[0]["name"] == "file_read"
+    assert recovered.tool_calls[0]["args"]["path"] == "./monitor.go"
+    assert recovered.additional_kwargs["recovered_text_tool_call"] is True
+
+
+def test_does_not_recover_text_write_or_tool_call_with_prose():
+    write = AIMessage(
+        content='{"name":"file_write","arguments":{"path":"x","content":"y"}}'
+    )
+    prose = AIMessage(
+        content='I will do this {"name":"file_read","arguments":{"path":"x"}}'
+    )
+
+    assert _recover_read_only_text_tool_call(write, {"file_write"}) is write
+    assert _recover_read_only_text_tool_call(prose, {"file_read"}) is prose
+
+
 def test_format_tool_error_classifies_ordinary_error():
     assert _format_tool_error(RuntimeError("boom")) == (
         "Error [TOOL_ERROR]: RuntimeError: boom"
@@ -113,7 +208,7 @@ def test_format_tool_error_classifies_and_bounds_timeout():
     assert content.endswith("... (truncated)")
 
 
-def test_reset_turn_state_preserves_checkpointed_context():
+def test_reset_turn_state_refreshes_workspace_context():
     state = AgentState(
         messages=[HumanMessage(content="continue the investigation")],
         workspace_context="workspace",
@@ -131,6 +226,7 @@ def test_reset_turn_state_preserves_checkpointed_context():
         "consecutive_errors": 0,
         "critique_attempts": 0,
         "compression_summary": "",
+        "workspace_context": "",
     }
     assert state.messages[0].content == "continue the investigation"
     assert state.workspace_context == "workspace"
@@ -157,6 +253,29 @@ async def test_inject_context_fetches_workspace():
     ):
         result = await inject_context_node(state)
     assert "workspace_context" in result
+
+
+@pytest.mark.asyncio
+async def test_inject_context_uses_request_workspace_snapshot(tmp_path):
+    from app.context.request_context import set_request_context
+    from app.tools.agent_mode import set_workspace_root
+
+    request_workspace = tmp_path / "request-workspace"
+    current_workspace = tmp_path / "current-workspace"
+    request_workspace.mkdir()
+    current_workspace.mkdir()
+    set_workspace_root(str(current_workspace))
+    set_request_context(
+        "request-workspace",
+        "run-workspace",
+        "tenant:workspace",
+        workspace_root=str(request_workspace),
+    )
+
+    result = await inject_context_node(AgentState(skills_catalog="already"))
+
+    assert "Workspace root for all file tools: ." in result["workspace_context"]
+    assert "Workspace name (display only): request-workspace" in result["workspace_context"]
 
 
 # ── _build_llm_messages ──────────────────────────────────────
@@ -254,6 +373,35 @@ def test_build_llm_messages_compresses_old_tool_messages():
     assert len(persisted_tool_messages[0].content) == 3000
 
 
+def test_build_llm_view_compacts_recent_tool_output_only_on_overflow():
+    state = AgentState(
+        messages=[
+            HumanMessage(content="implement cancellation"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "read-1", "name": "file_read", "args": {"path": "service.py"}}
+                ],
+            ),
+            ToolMessage(
+                content="x" * 3000,
+                tool_call_id="read-1",
+                name="file_read",
+                id="recent-tool",
+            ),
+        ]
+    )
+
+    view = _build_llm_view(state, "system", max_context_chars=2500)
+
+    assert view.overflow is False
+    recent = next(message for message in view.messages if isinstance(message, ToolMessage))
+    assert len(str(recent.content)) < 1500
+    assert "compacted 1 recent tool output" in view.compression_summary
+    persisted = next(message for message in state.messages if isinstance(message, ToolMessage))
+    assert len(str(persisted.content)) == 3000
+
+
 def test_update_investigation_node_extracts_confirmed_fact():
     state = AgentState(
         messages=[
@@ -330,6 +478,54 @@ def test_plugin_artifact_becomes_deterministic_checkpointed_answer():
     assert route_after_artifact_synthesis(routed_state) == "__end__"
 
 
+def test_artifact_synthesis_does_not_reuse_prior_turn_evidence():
+    class DemoPlugin:
+        plugin_id = "demo"
+
+        def extract_file(self, **kwargs):
+            return None
+
+        def accepts_request(self, prompt, artifact):
+            return "explain" in prompt
+
+        def required_tools(self, prompt, tool_outputs):
+            return ()
+
+        def validate(self, artifact):
+            return True
+
+        def render_answer(self, artifact):
+            return f"Verified: {artifact.content}"
+
+    old_artifact = VerifiedArtifact(
+        plugin_id="demo",
+        artifact_type="summary",
+        source_path="old.txt",
+        content="old evidence",
+    )
+    state = AgentState(
+        messages=[
+            HumanMessage(content="explain old evidence"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "old-read", "name": "file_read", "args": {"path": "old.txt"}}
+                ],
+            ),
+            ToolMessage(
+                content=old_artifact.to_tool_block(),
+                tool_call_id="old-read",
+                name="file_read",
+            ),
+            HumanMessage(content="explain new evidence"),
+        ]
+    )
+
+    node = make_synthesize_artifact_node(ArtifactRegistry([DemoPlugin()]))
+
+    assert node(state) == {}
+
+
 def test_artifact_synthesis_falls_back_when_no_plugin_accepts():
     node = make_synthesize_artifact_node(ArtifactRegistry())
     state = AgentState(messages=[HumanMessage(content="explain this project")])
@@ -390,6 +586,194 @@ def test_route_to_tools_when_tool_calls():
     assert route(state) == "tools"
 
 
+def test_repeated_completed_read_routes_to_finalization():
+    route = make_route_node(max_steps=20)
+    state = AgentState(
+        messages=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "first", "name": "file_read", "args": {"path": "monitor.go"}}
+                ],
+            ),
+            ToolMessage(
+                content="File: monitor.go",
+                tool_call_id="first",
+                name="file_read",
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "again", "name": "file_read", "args": {"path": "./monitor.go"}}
+                ],
+            ),
+        ],
+        loop_counter=2,
+    )
+
+    assert route(state) == "hallucination_fix"
+    correction = make_hallucination_fix_node({"file_read"})(state)
+    assert str(correction["messages"][0].content).startswith("🚨 FINALIZE.")
+
+
+def test_failed_read_can_be_retried_with_same_arguments():
+    route = make_route_node(max_steps=20)
+    state = AgentState(
+        messages=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "first", "name": "file_read", "args": {"path": "missing.go"}}
+                ],
+            ),
+            ToolMessage(
+                content="❌ File not found: missing.go",
+                tool_call_id="first",
+                name="file_read",
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "again", "name": "file_read", "args": {"path": "missing.go"}}
+                ],
+            ),
+        ],
+        loop_counter=2,
+    )
+
+    assert route(state) == "tools"
+
+
+def test_formatted_tool_error_can_be_retried():
+    route = make_route_node(max_steps=20)
+    state = AgentState(
+        messages=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "first", "name": "file_read", "args": {"path": "missing.go"}}
+                ],
+            ),
+            ToolMessage(
+                content=_format_tool_error(RuntimeError("unavailable")),
+                tool_call_id="first",
+                name="file_read",
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "again", "name": "file_read", "args": {"path": "missing.go"}}
+                ],
+            ),
+        ],
+        loop_counter=2,
+    )
+
+    assert route(state) == "tools"
+
+
+def test_tool_call_budget_counts_multiple_calls_in_one_turn():
+    route = make_route_node(max_steps=2)
+    state = AgentState(
+        messages=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "one", "name": "file_read", "args": {"path": "one.go"}},
+                    {"id": "two", "name": "file_read", "args": {"path": "two.go"}},
+                    {"id": "three", "name": "file_read", "args": {"path": "three.go"}},
+                ],
+            )
+        ],
+        loop_counter=1,
+    )
+
+    with pytest.raises(AgentTerminationError, match="tool-call budget"):
+        route(state)
+
+
+def test_tool_call_budget_resets_for_follow_up_turn():
+    route = make_route_node(max_steps=2)
+    state = AgentState(
+        messages=[
+            HumanMessage(content="first question"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "old-one", "name": "file_read", "args": {"path": "one.go"}},
+                    {"id": "old-two", "name": "file_read", "args": {"path": "two.go"}},
+                ],
+            ),
+            HumanMessage(content="follow-up question"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "new-one", "name": "file_read", "args": {"path": "three.go"}}
+                ],
+            ),
+        ],
+        loop_counter=1,
+    )
+
+    assert route(state) == "tools"
+
+
+def test_duplicate_read_from_prior_turn_does_not_force_finalization():
+    route = make_route_node(max_steps=12)
+    state = AgentState(
+        messages=[
+            HumanMessage(content="first question"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "old", "name": "file_read", "args": {"path": "monitor.go"}}
+                ],
+            ),
+            ToolMessage(content="old content", tool_call_id="old", name="file_read"),
+            HumanMessage(content="read it again after my changes"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "new", "name": "file_read", "args": {"path": "monitor.go"}}
+                ],
+            ),
+        ],
+        loop_counter=1,
+    )
+
+    assert route(state) == "tools"
+
+
+def test_repeated_read_after_finalization_terminates():
+    route = make_route_node(max_steps=20)
+    state = AgentState(
+        messages=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "first", "name": "file_read", "args": {"path": "monitor.go"}}
+                ],
+            ),
+            ToolMessage(
+                content="File: monitor.go",
+                tool_call_id="first",
+                name="file_read",
+            ),
+            HumanMessage(content="🚨 FINALIZE. Answer now."),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "again", "name": "file_read", "args": {"path": "monitor.go"}}
+                ],
+            ),
+        ],
+        loop_counter=3,
+    )
+
+    with pytest.raises(AgentTerminationError, match="already completed read"):
+        route(state)
+
+
 def test_route_to_end_when_no_tool_calls():
     route = make_route_node(max_steps=20)
     state = AgentState(
@@ -399,13 +783,33 @@ def test_route_to_end_when_no_tool_calls():
     assert route(state) == "__end__"
 
 
+def test_route_ends_after_tool_budget_finalization():
+    route = make_route_node(max_steps=12)
+    state = AgentState(
+        messages=[
+            AIMessage(
+                content="Next, we will run more tools.",
+                additional_kwargs={"tool_budget_finalized": True},
+            )
+        ],
+        loop_counter=3,
+    )
+
+    assert route(state) == "__end__"
+
+
 @pytest.mark.parametrize(
     "content",
     [
         "I will now explore the environment directory.",
         "Let me read the remaining config files.",
         "Next, let's examine the production configuration.",
+        "Next, we will read the file to understand how the service interacts with the API.",
+        "Next, we'll inspect the remaining implementation.",
         "The next step is to search for broader terms.",
+        "Next, I will add the cancellation endpoint in api.py.",
+        "I will update service.py and implement the transition now.",
+        "I will now make the required code changes.",
     ],
 )
 def test_route_retries_unfinished_action_after_tool_result(content):

@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,6 +13,7 @@ from app.agent.model.request_recovery import (
     ModelRetryPolicy,
     classify_model_error,
     invoke_with_model_retry,
+    model_retry_lease_owner,
     validate_model_response,
 )
 from app.context.request_context import set_agent_contract, set_prompt_version, set_request_context
@@ -72,6 +74,31 @@ async def test_does_not_retry_auth_failure():
     assert model.ainvoke.await_count == 1
     assert failure.value.terminal_reason == "model_request_failed"
     assert failure.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_model_timeout_cancels_request_without_retry():
+    model = AsyncMock()
+
+    async def never_returns(_messages):
+        await asyncio.Event().wait()
+
+    model.ainvoke.side_effect = never_returns
+
+    with pytest.raises(ModelRequestFailedError) as failure:
+        await invoke_with_model_retry(
+            model,
+            [HumanMessage(content="hello")],
+            policy=ModelRetryPolicy(
+                max_retries=2,
+                initial_delay_ms=0,
+                timeout_seconds=0.01,
+            ),
+        )
+
+    assert failure.value.failure.code == "TIMEOUT"
+    assert failure.value.retryable is False
+    assert model.ainvoke.await_count == 1
 
 
 def test_rejects_empty_response_without_tool_calls():
@@ -141,7 +168,7 @@ async def test_durable_retry_continues_attempt_count_after_restart(tmp_path, mon
         )
     assert store.claim(
         "run-retry",
-        owner="recovery-worker",
+        owner=model_retry_lease_owner("run-retry"),
         expected_state="model_retry_waiting",
     ) is not None
     store.transition("run-retry", state="model_retry_executing")
@@ -181,7 +208,7 @@ async def test_resume_rejects_request_fingerprint_mismatch(tmp_path, monkeypatch
     )
     assert store.claim(
         "run-mismatch",
-        owner="recovery-worker",
+        owner=model_retry_lease_owner("run-mismatch"),
         expected_state="model_retry_executing",
     ) is not None
     model = AsyncMock()

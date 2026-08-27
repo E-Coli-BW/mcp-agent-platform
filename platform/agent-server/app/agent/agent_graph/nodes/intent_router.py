@@ -32,7 +32,10 @@ def _find_latest_user_text(messages: list[BaseMessage]) -> str | None:
     return None
 
 
-def make_intent_router_node(tools: list[BaseTool]):
+def make_intent_router_node(
+    tools: list[BaseTool],
+    enabled: bool | None = None,
+):
     """Create the first-hop graph node for high-confidence read-only calls."""
     tool_by_name = {
         tool.name: tool
@@ -48,7 +51,12 @@ def make_intent_router_node(tools: list[BaseTool]):
     async def intent_router(state: Any) -> dict[str, Any]:
         from app.config import settings
 
-        if not settings.direct_tool_routing_enabled:
+        routing_enabled = (
+            settings.direct_tool_routing_enabled
+            if enabled is None
+            else enabled
+        )
+        if not routing_enabled:
             return {}
         messages = list(state.messages)
         if not messages or not isinstance(messages[-1], HumanMessage):

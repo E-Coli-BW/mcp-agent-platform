@@ -8,7 +8,12 @@ from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from app.agent.agent_graph.nodes.verification import (
+    _FINALIZE_PREFIX,
+    repeats_completed_read_only_call,
+)
 from app.agent.agent_graph.state import AgentState, AgentTerminationError
+from app.agent.tool_routing.required_tools import current_turn_messages
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +27,11 @@ _HALLUCINATED_TOOL_RE = re.compile(
 )
 _UNFINISHED_ACTION_RE = re.compile(
     r"\b(?:I\s+will|I'll|Let\s+me|Let's|"
-    r"Next,?\s+(?:I\s+will|I'll|let's)|The\s+next\s+step\s+is\s+to)\s+"
+    r"Next,?\s+(?:I\s+will|I'll|we\s+will|we'll|let's)|"
+    r"The\s+next\s+step\s+is\s+to)\s+"
     r"(?:now\s+)?(?:perform\s+(?:a\s+)?(?:grep\s+)?search|search|grep|read|"
-    r"inspect|examine|explore|list|check|open|look\s+for|use)\b",
+    r"inspect|examine|explore|list|check|open|look\s+for|use|edit|update|"
+    r"modify|change|implement|add|create|write|fix|make)\b",
     re.IGNORECASE,
 )
 _EXPLICIT_TOOL_SYNTAX_RE = re.compile(
@@ -66,9 +73,33 @@ def make_route_node(max_steps: int, available_tools: set[str] | None = None):
 
         last = state.messages[-1] if state.messages else None
         if isinstance(last, AIMessage) and last.tool_calls:
+            current_messages = current_turn_messages(list(state.messages))
+            total_tool_calls = sum(
+                len(message.tool_calls)
+                for message in current_messages
+                if isinstance(message, AIMessage)
+            )
+            if total_tool_calls > max_steps:
+                raise AgentTerminationError(
+                    "max_tool_calls_exceeded",
+                    f"agent exceeded its {max_steps}-tool-call budget",
+                )
+            if repeats_completed_read_only_call(list(state.messages)):
+                previous = state.messages[-2] if len(state.messages) >= 2 else None
+                if (
+                    isinstance(previous, HumanMessage)
+                    and str(previous.content).startswith(_FINALIZE_PREFIX)
+                ):
+                    raise AgentTerminationError(
+                        "tool_protocol_error",
+                        "model repeated an already completed read after finalization",
+                    )
+                return "hallucination_fix"
             return "tools"
 
         if isinstance(last, AIMessage) and not last.tool_calls:
+            if last.additional_kwargs.get("tool_budget_finalized"):
+                return "__end__"
             from app.agent.tool_routing.required_tools import missing_tool_requirement
 
             previous = state.messages[-2] if len(state.messages) >= 2 else None

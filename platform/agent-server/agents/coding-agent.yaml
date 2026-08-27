@@ -41,6 +41,9 @@ prompt: |
     a focused range around each match; do not default to the first 100 lines when
     the definition is later in a large file. Never construct paths by guessing.
   - file_write/file_edit → say "Updated <file>: <1-line description>"
+  - run_tests → runs bounded tests in the current workspace and reports the command.
+  - code_run/code_shell → standalone Docker snippets only. The workspace is NOT mounted;
+    never use them to run the current project or inspect project files.
   - rag_search → use results silently to inform your answer
   - code_run/code_shell → report pass/fail + relevant output lines only
   - git_commit → state what was committed
@@ -92,9 +95,17 @@ tools:
   - spawn_subagent
 
 guardrails:
-  max_tool_calls: 20
-  max_tokens: 4096
-  max_context_chars: 20000
+  max_tool_calls: 12
+  max_tokens: 1024
+  max_context_chars: 10500
+
+runtime:
+  name: local-qwen-7b
+  max_tool_calls: 12
+  max_context_chars: 10500
+  verification_enabled: false
+  allow_subagents: false
+  direct_tool_routing_enabled: true
 
 routing:
   complex_model: openai/gpt-4o

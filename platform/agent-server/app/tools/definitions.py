@@ -322,7 +322,7 @@ def file_list(directory: str | None = None, depth: int = 3) -> str:
 
 @tool
 async def code_run(code: str, language: str = "python", timeout: int = 30) -> str:
-    """Execute a code snippet in a sandboxed environment. Returns stdout, stderr, and exit code."""
+    """Execute a standalone Python, JavaScript, or shell snippet in an isolated Docker sandbox. The current workspace is not mounted; do not use this to run a project or read project files. Returns stdout, stderr, and exit code."""
     return await _get_codeexec().call_tool("code_run", {
         "code": code, "language": language, "timeout": timeout,
     }, tenant_id=tenant_context.get())
@@ -330,7 +330,7 @@ async def code_run(code: str, language: str = "python", timeout: int = 30) -> st
 
 @tool
 async def code_shell(command: str) -> str:
-    """Execute a shell command. Shorthand for code_run with language=shell."""
+    """Execute a standalone Alpine shell snippet in an isolated Docker sandbox. The current workspace and project toolchains are unavailable; do not use this to run a project."""
     from app.tools.agent_mode import run_idempotent_async_mutation
 
     return await run_idempotent_async_mutation(

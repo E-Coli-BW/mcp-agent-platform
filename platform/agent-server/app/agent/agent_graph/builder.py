@@ -42,6 +42,8 @@ def build_agent_graph(
     system_prompt: str,
     checkpointer=None,
     max_steps: int | None = None,
+    max_context_chars: int | None = None,
+    direct_tool_routing_enabled: bool | None = None,
 ):
     """Build and compile the explicit v2 ReAct topology."""
     resolved_max_steps = max_steps or settings.max_agent_steps
@@ -56,10 +58,22 @@ def build_agent_graph(
     graph = StateGraph(AgentState)
     graph.add_node("reset_turn_state", reset_turn_state_node)
     graph.add_node("inject_context", inject_context_node)
-    graph.add_node("intent_router", make_intent_router_node(execution_tools))
+    graph.add_node(
+        "intent_router",
+        make_intent_router_node(
+            execution_tools,
+            enabled=direct_tool_routing_enabled,
+        ),
+    )
     graph.add_node(
         "call_llm",
-        make_call_llm_node(model, execution_tools, system_prompt),
+        make_call_llm_node(
+            model,
+            execution_tools,
+            system_prompt,
+            max_context_chars=max_context_chars,
+            max_tool_calls=resolved_max_steps,
+        ),
     )
     graph.add_node("maybe_critique", make_maybe_critique_node())
     graph.add_node(

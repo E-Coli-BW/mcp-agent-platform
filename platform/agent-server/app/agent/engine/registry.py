@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from typing import Any, TypeAlias
 
@@ -23,6 +25,7 @@ class LangGraphAgentRegistry:
     def __init__(self) -> None:
         self._agents: dict[AgentCacheKey, object] = {}
         self._tool_names: dict[AgentCacheKey, set[str]] = {}
+        self._config_fingerprints: dict[AgentCacheKey, str] = {}
         self._lock = asyncio.Lock()
 
     @property
@@ -41,6 +44,7 @@ class LangGraphAgentRegistry:
         """Atomically replace caches while in-flight Agents retain references."""
         self._agents = {}
         self._tool_names = {}
+        self._config_fingerprints = {}
 
     async def get_agent(
         self,
@@ -81,10 +85,12 @@ class LangGraphAgentRegistry:
                     config.knowledge.get("collection", ""),
                 )
                 current_tool_names = set(config.tools)
+                config_fingerprint = self._config_fingerprint(config)
                 self._ensure_configured_agent(
                     cache_key,
                     config,
                     current_tool_names,
+                    config_fingerprint,
                     temperature,
                 )
                 return self._agents[cache_key]
@@ -110,10 +116,16 @@ class LangGraphAgentRegistry:
         cache_key: AgentCacheKey,
         config: Any,
         current_tool_names: set[str],
+        config_fingerprint: str,
         temperature: float | None,
     ) -> None:
         cached_tools = self._tool_names.get(cache_key, set())
-        if cache_key in self._agents and current_tool_names == cached_tools:
+        cached_fingerprint = self._config_fingerprints.get(cache_key)
+        if (
+            cache_key in self._agents
+            and current_tool_names == cached_tools
+            and config_fingerprint == cached_fingerprint
+        ):
             return
         self._log_rebuild(cache_key, cached_tools, current_tool_names)
         from app.agent.agent_graph.factory import create_agent_v2_from_config
@@ -121,6 +133,30 @@ class LangGraphAgentRegistry:
         agent = create_agent_v2_from_config(config, temperature=temperature)
         self._agents[cache_key] = agent
         self._tool_names[cache_key] = current_tool_names
+        self._config_fingerprints[cache_key] = config_fingerprint
+
+    @staticmethod
+    def _config_fingerprint(config: Any) -> str:
+        graph_contract = {
+            key: getattr(config, key, None)
+            for key in (
+                "id",
+                "model",
+                "prompt",
+                "tools",
+                "guardrails",
+                "routing",
+                "knowledge",
+                "runtime",
+            )
+        }
+        encoded = json.dumps(
+            graph_contract,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def _ensure_fallback_agent(
         self,
@@ -130,7 +166,11 @@ class LangGraphAgentRegistry:
         temperature: float | None,
     ) -> None:
         cached_tools = self._tool_names.get(cache_key, set())
-        if cache_key in self._agents and current_tool_names == cached_tools:
+        if (
+            cache_key in self._agents
+            and current_tool_names == cached_tools
+            and cache_key not in self._config_fingerprints
+        ):
             return
         self._log_rebuild(cache_key, cached_tools, current_tool_names)
         from app.agent.agent_graph.factory import create_agent_v2
@@ -138,6 +178,7 @@ class LangGraphAgentRegistry:
         agent = create_agent_v2(resolved_model, temperature=temperature)
         self._agents[cache_key] = agent
         self._tool_names[cache_key] = current_tool_names
+        self._config_fingerprints.pop(cache_key, None)
 
     def _log_rebuild(
         self,

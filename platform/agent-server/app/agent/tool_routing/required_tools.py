@@ -38,7 +38,33 @@ REQUIREMENTS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     ),
 )
 
-_INTERNAL_HUMAN_PREFIXES = ("🚨 STOP.", "⚠️ The previous tool call", "🪞")
+_INTERNAL_HUMAN_PREFIXES = (
+    "🚨 STOP.",
+    "🚨 FINALIZE.",
+    "⚠️ The previous tool call",
+    "🪞",
+)
+
+
+def current_turn_messages(messages: list[object]) -> list[object]:
+    """Return messages belonging to the latest real user turn."""
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if getattr(message, "type", None) != "human":
+            continue
+        content = str(getattr(message, "content", ""))
+        if not content.startswith(_INTERNAL_HUMAN_PREFIXES):
+            return messages[index:]
+    return messages
+
+
+def tool_message_is_error(message: object) -> bool:
+    """Recognize every error encoding produced by the tool boundary."""
+    content = str(getattr(message, "content", ""))
+    return (
+        getattr(message, "status", None) == "error"
+        or content.startswith(("❌", "Error [TOOL_"))
+    )
 
 
 def required_tools(prompt: str) -> tuple[str, ...]:
@@ -63,6 +89,7 @@ def required_tools_for_agent(prompt: str, available_tools: set[str]) -> tuple[st
 
 
 def missing_tool_requirement(messages: list[object], available_tools: set[str] | None = None) -> tuple[str, ...]:
+    messages = current_turn_messages(messages)
     user_prompt = ""
     for message in reversed(messages):
         if getattr(message, "type", None) == "human":
@@ -71,10 +98,18 @@ def missing_tool_requirement(messages: list[object], available_tools: set[str] |
                 user_prompt = content
                 break
     required = required_tools_for_agent(user_prompt, available_tools or set()) if available_tools is not None else required_tools(user_prompt)
-    observed = set()
+    calls_by_id: dict[str, str] = {}
+    observed: set[str] = set()
     for message in messages:
         for call in getattr(message, "tool_calls", []) or []:
-            observed.add(call.get("name"))
+            call_id = str(call.get("id", ""))
+            tool_name = str(call.get("name", ""))
+            if call_id and tool_name:
+                calls_by_id[call_id] = tool_name
+        if getattr(message, "type", None) == "tool" and not tool_message_is_error(message):
+            tool_name = calls_by_id.get(str(getattr(message, "tool_call_id", "")))
+            if tool_name:
+                observed.add(tool_name)
     missing = tuple(tool for tool in required if tool not in observed)
     if missing:
         return missing
@@ -84,6 +119,7 @@ def missing_tool_requirement(messages: list[object], available_tools: set[str] |
         str(getattr(message, "content", ""))
         for message in messages
         if getattr(message, "type", None) == "tool"
+        and not tool_message_is_error(message)
     ]
     plugin_required = artifact_registry.required_tools(user_prompt, tool_outputs)
     if available_tools is not None:

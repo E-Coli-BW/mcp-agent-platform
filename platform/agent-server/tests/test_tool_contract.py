@@ -32,6 +32,7 @@ def test_project_read_reports_only_unobserved_evidence_tools():
                 }
             ],
         ),
+        ToolMessage(content="workflow.py:1:def run", tool_call_id="call-1", name="file_search"),
     ]
 
     assert missing_tool_requirement(messages) == ("file_read",)
@@ -57,6 +58,7 @@ def test_generic_project_read_falls_back_after_search_and_read():
                 },
             ],
         ),
+        ToolMessage(content="workflow.py:1:def run", tool_call_id="search-1", name="file_search"),
         ToolMessage(content="workflow source", tool_call_id="read-1", name="file_read"),
     ]
 
@@ -153,8 +155,50 @@ def test_observed_required_tool_is_not_missing():
             content="",
             tool_calls=[{"name": "code_run", "args": {}, "id": "call-1", "type": "tool_call"}],
         ),
+        ToolMessage(content="4", tool_call_id="call-1", name="code_run"),
     ]
     assert missing_tool_requirement(messages) == ()
+
+
+def test_failed_required_tool_remains_missing():
+    messages = [
+        HumanMessage(content="read this project and explain it"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "file_search", "args": {}, "id": "search", "type": "tool_call"},
+                {"name": "file_read", "args": {}, "id": "read", "type": "tool_call"},
+            ],
+        ),
+        ToolMessage(
+            content="Error [TOOL_ERROR]: RuntimeError: unavailable",
+            tool_call_id="search",
+            name="file_search",
+        ),
+        ToolMessage(
+            content="❌ File not found",
+            tool_call_id="read",
+            name="file_read",
+        ),
+    ]
+
+    assert missing_tool_requirement(messages) == ("file_search", "file_read")
+
+
+def test_required_tool_observation_resets_for_follow_up_turn():
+    messages = [
+        HumanMessage(content="read this project and explain it"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "file_search", "args": {}, "id": "old-search", "type": "tool_call"},
+                {"name": "file_read", "args": {}, "id": "old-read", "type": "tool_call"},
+            ],
+        ),
+        HumanMessage(content="read this repo and explain it again"),
+    ]
+
+    assert missing_tool_requirement(messages) == ("file_search", "file_read")
 
 
 def test_customer_qa_knowledge_question_requires_rag_only_when_available():

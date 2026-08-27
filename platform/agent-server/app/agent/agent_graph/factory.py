@@ -30,10 +30,21 @@ def create_agent_v2(
 def create_agent_v2_from_config(config, temperature: float | None = None):
     """Create a v2 Agent from a declarative AgentConfig."""
     set_agent_contract(config.id, config.knowledge.get("collection", ""))
+    runtime_profile = resolve_runtime_profile(config, settings)
+    max_tokens = int(config.guardrails.get("max_tokens", settings.max_tokens))
+    tools = resolve_tools(config.tools)
+    if not runtime_profile.allow_subagents:
+        tools = [tool for tool in tools if tool.name != "spawn_subagent"]
     return build_agent_graph(
-        model=create_chat_model(config.model, temperature=temperature),
-        tools=resolve_tools(config.tools),
+        model=create_chat_model(
+            config.model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        ),
+        tools=tools,
         system_prompt=config.prompt or get_system_prompt(),
         checkpointer=get_checkpointer(),
-        max_steps=resolve_runtime_profile(config, settings).max_tool_calls,
+        max_steps=runtime_profile.max_tool_calls,
+        max_context_chars=runtime_profile.max_context_chars,
+        direct_tool_routing_enabled=runtime_profile.direct_tool_routing_enabled,
     )
