@@ -101,7 +101,7 @@ class Case:
     session_id_pattern: str = "eval:{id}:{ts}"
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Case":
+    def from_dict(cls, d: dict[str, Any]) -> Case:
         exp = d.get("expected") or {}
         return cls(
             id=d["id"],
@@ -139,6 +139,9 @@ class Trajectory:
     completion_tokens: int = 0
     http_status: int = 0
     error: str | None = None                                       # transport-level errors
+    run_id: str | None = None
+    trace_source: str = "none"                                    # runtime_events | legacy_markers | none
+    runtime_events: list[dict[str, Any]] = field(default_factory=list)
     # OPTIONAL: a paired bare-LLM baseline answer for the same prompt.
     # Populated when the runner is invoked with --with-baseline (or when
     # a case sets expects_agent_lift=True). Lets the `lift` scorer
@@ -191,6 +194,8 @@ class RunResult:
             "prompt_tokens": self.trajectory.prompt_tokens,
             "completion_tokens": self.trajectory.completion_tokens,
             "tool_calls": self.trajectory.tool_names,
+            "run_id": self.trajectory.run_id,
+            "trace_source": self.trajectory.trace_source,
             "baseline_latency_ms": self.trajectory.baseline_latency_ms,
             "baseline_answer_excerpt": (self.trajectory.baseline_answer or "")[:300] or None,
             "error": self.trajectory.error,

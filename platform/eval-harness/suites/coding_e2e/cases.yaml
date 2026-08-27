@@ -1,0 +1,138 @@
+version: 1
+defaults:
+  fixture: order_service
+  model: coding-agent
+  public_test: [python, -m, unittest, discover, -s, tests, -v]
+  max_latency_ms: 120000
+
+cases:
+  - id: order_service_architecture
+    kind: read_only
+    tags: [smoke, read, architecture]
+    prompt: |
+      Read this repository and explain its architecture. Identify the entry or
+      composition root, API layer, business-service layer, persistence boundary,
+      event boundary, and the direction of dependencies. Ground the answer in
+      concrete source files and class names.
+    expected:
+      answer_contains:
+        - OrderAPI
+        - OrderService
+        - InMemoryOrderRepository
+        - EventPublisher
+        - application.py
+      fixture_must_contain:
+        - class OrderAPI
+        - class OrderService
+        - class InMemoryOrderRepository
+        - class EventPublisher
+      required_tools: [file_search, file_read]
+      forbidden_tools: [file_write, file_edit, code_shell]
+      max_tool_calls: 8
+      max_model_calls: 10
+      no_changes: true
+
+  - id: order_service_api_documentation
+    kind: read_only
+    tags: [read, api-docs]
+    prompt: |
+      Read the repository and produce concise API documentation. For every
+      endpoint, include HTTP method, path, purpose, success status, and relevant
+      error statuses. Do not invent endpoints that are not implemented.
+    expected:
+      answer_contains:
+        - GET /health
+        - POST /orders
+        - GET /orders/{id}
+        - POST /orders/{id}/confirm
+        - POST /orders/{id}/fulfill
+        - "404"
+        - "409"
+      fixture_must_contain:
+        - /health
+        - /orders
+        - confirm
+        - fulfill
+      required_tools: [file_search, file_read]
+      forbidden_tools: [file_write, file_edit, code_shell]
+      max_tool_calls: 8
+      max_model_calls: 10
+      no_changes: true
+
+  - id: order_service_business_flow
+    kind: read_only
+    tags: [read, business-flow, diagram]
+    prompt: |
+      Read the repository and describe the order business flow as a Mermaid
+      state diagram. Include creation, confirmation, fulfillment, persistence,
+      and domain-event publication. Follow the diagram with a short explanation
+      grounded in source files.
+    expected:
+      answer_contains:
+        - mermaid
+        - PENDING
+        - CONFIRMED
+        - FULFILLED
+        - order.created
+        - order.confirmed
+        - order.fulfilled
+      answer_regex: '(stateDiagram-v2|flowchart)[\s\S]*-->'
+      fixture_must_contain:
+        - PENDING
+        - CONFIRMED
+        - FULFILLED
+        - order.created
+      required_tools: [file_search, file_read]
+      forbidden_tools: [file_write, file_edit, code_shell]
+      max_tool_calls: 10
+      max_model_calls: 12
+      no_changes: true
+
+  - id: order_service_improve_item_validation
+    kind: mutation
+    tags: [mutation, method-change, validation]
+    prompt: |
+      Improve OrderService.create_order so item SKUs are stripped of surrounding
+      whitespace, blank SKUs are rejected, and duplicate SKUs are rejected after
+      normalization. Raise InvalidOrder for invalid input so OrderAPI continues
+      to return HTTP 400. Preserve existing behavior. Do not modify files under
+      `tests/`; the benchmark treats them as protected oracles. Make the code
+      changes in the implementation workspace.
+    expected:
+      required_tools: [file_search, file_read]
+      required_any_tools: [file_edit, file_write]
+      forbidden_tools: [code_shell, git_commit]
+      max_tool_calls: 10
+      max_model_calls: 12
+      required_changed_files:
+        - order_service/service.py
+      forbidden_changed_files:
+        - config/app.toml
+      hidden_test: hidden_tests/test_item_validation.py
+      control_overlay: controls/item_validation
+
+  - id: order_service_add_cancellation
+    kind: mutation
+    tags: [smoke, mutation, feature]
+    prompt: |
+      Add order cancellation. A PENDING or CONFIRMED order may be cancelled;
+      cancelling an already cancelled order is idempotent; a FULFILLED order
+      must raise InvalidTransition. Add OrderStatus.CANCELLED, publish exactly
+      one order.cancelled event on the first cancellation, and expose
+      POST /orders/{id}/cancel through OrderAPI. Preserve existing behavior. Do
+      not modify files under `tests/`; the benchmark treats them as protected
+      oracles. Make the code changes in the implementation workspace.
+    expected:
+      required_tools: [file_search, file_read]
+      required_any_tools: [file_edit, file_write]
+      forbidden_tools: [code_shell, git_commit]
+      max_tool_calls: 12
+      max_model_calls: 12
+      required_changed_files:
+        - order_service/models.py
+        - order_service/service.py
+        - order_service/api.py
+      forbidden_changed_files:
+        - config/app.toml
+      hidden_test: hidden_tests/test_cancellation.py
+      control_overlay: controls/cancellation

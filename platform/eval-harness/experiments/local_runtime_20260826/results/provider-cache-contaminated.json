@@ -1,0 +1,99 @@
+{
+  "session_id": "borrowed-design-valid-2",
+  "model": "coding-agent",
+  "turns": [
+    {
+      "turn": 1,
+      "prompt_hash": "sha256:8c57235323dd9d09f10cb7ff2d83c778865973e51768222d43be9dd12b949248",
+      "run_id": "run-52990b2e62de",
+      "request_id": "req-61f471c775d2",
+      "http_latency_ms": 7863,
+      "model_summary": {
+        "model_calls": 1,
+        "prompt_tokens": 2884,
+        "completion_tokens": 131,
+        "model_duration_ms": 7801,
+        "prefill_tokens": 2884,
+        "prefill_duration_ms": 50,
+        "decode_tokens": 131,
+        "decode_duration_ms": 7593,
+        "first_call": {
+          "seq": 1,
+          "provider": "ollama",
+          "model": "coding-agent",
+          "prompt_tokens": 2884,
+          "completion_tokens": 131,
+          "duration_ms": 7801,
+          "status": "ok",
+          "input_prefix_hash": "sha256:80b55029f1713089e29aaef2796d7c300b666d18c4dcb1a5448ece48681fd870",
+          "input_prefix_chars": 4910,
+          "performance": {
+            "total_duration_ms": 7800,
+            "load_duration_ms": 141,
+            "prefill_duration_ms": 50,
+            "decode_duration_ms": 7593,
+            "prefill_tokens": 2884,
+            "decode_tokens": 131,
+            "prefill_tokens_per_second": 57680.0,
+            "decode_tokens_per_second": 17.25,
+            "ttft_ms": 206,
+            "ttft_estimated": false
+          }
+        },
+        "calls": [],
+        "prefill_tokens_per_second": 57680.0,
+        "decode_tokens_per_second": 17.25
+      }
+    },
+    {
+      "turn": 2,
+      "prompt_hash": "sha256:a0102ccf7cf33cab55a9715069a7e7da16e95a5e60215346faafffd404d8c83d",
+      "run_id": "run-93d73f3cb048",
+      "request_id": "req-e0831fc7d884",
+      "http_latency_ms": 3140,
+      "model_summary": {
+        "model_calls": 1,
+        "prompt_tokens": 3039,
+        "completion_tokens": 52,
+        "model_duration_ms": 3105,
+        "prefill_tokens": 3039,
+        "prefill_duration_ms": 187,
+        "decode_tokens": 52,
+        "decode_duration_ms": 2772,
+        "first_call": {
+          "seq": 1,
+          "provider": "ollama",
+          "model": "coding-agent",
+          "prompt_tokens": 3039,
+          "completion_tokens": 52,
+          "duration_ms": 3105,
+          "status": "ok",
+          "input_prefix_hash": "sha256:80b55029f1713089e29aaef2796d7c300b666d18c4dcb1a5448ece48681fd870",
+          "input_prefix_chars": 4910,
+          "performance": {
+            "total_duration_ms": 3105,
+            "load_duration_ms": 130,
+            "prefill_duration_ms": 187,
+            "decode_duration_ms": 2772,
+            "prefill_tokens": 3039,
+            "decode_tokens": 52,
+            "prefill_tokens_per_second": 16251.34,
+            "decode_tokens_per_second": 18.76,
+            "ttft_ms": 332,
+            "ttft_estimated": false
+          }
+        },
+        "calls": [],
+        "prefill_tokens_per_second": 16251.34,
+        "decode_tokens_per_second": 18.76
+      }
+    }
+  ],
+  "comparison": {
+    "stable_prefix_match": true,
+    "warm_to_cold_http_latency": 0.399,
+    "warm_to_cold_total_prefill_duration": 3.74,
+    "warm_to_cold_first_call_prefill_duration": 3.74,
+    "warm_to_cold_first_call_prefill_tokens": 1.054
+  }
+}

@@ -21,18 +21,28 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import httpx
+import jwt as pyjwt
 import yaml
 
-from eval.case import Case, RunResult, ToolCall, Trajectory, CaseAggregate, parse_tool_markers
+from eval.case import (
+    Case,
+    CaseAggregate,
+    RunResult,
+    ToolCall,
+    Trajectory,
+    parse_tool_markers,
+)
 from eval.scorers import SCORERS
 
 log = logging.getLogger("eval.runner")
@@ -56,6 +66,235 @@ DEFAULT_BASELINE_BASE_URL = os.environ.get(
     "EVAL_BASELINE_BASE_URL", "http://localhost:11434/v1"
 )
 DEFAULT_BASELINE_API_KEY = os.environ.get("EVAL_BASELINE_API_KEY", "ollama")
+
+
+def _write_private_text(path: Path, content: str) -> None:
+    """Write a credential file with owner-only permissions."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    os.chmod(path, 0o600)
+
+
+def _eval_identity(jwt_file: str) -> tuple[str, str]:
+    """Derive a stable, collision-resistant local identity per token file."""
+    digest = hashlib.sha256(str(Path(jwt_file).resolve()).encode()).hexdigest()[:12]
+    return (
+        os.environ.get("EVAL_USERNAME", f"eval-{digest}"),
+        os.environ.get("EVAL_PASSWORD", "EvalHarness-2026!"),
+    )
+
+
+def _cached_token_matches_auth(token: str, auth_url: str) -> bool:
+    """Reject unexpired tokens whose signing key disappeared after Auth restart."""
+    try:
+        kid = pyjwt.get_unverified_header(token).get("kid")
+        if not kid:
+            return False
+        with httpx.Client(timeout=10) as client:
+            response = client.get(f"{auth_url.rstrip('/')}/auth/jwks")
+            response.raise_for_status()
+        key_data = next(
+            (
+                key
+                for key in response.json().get("keys", [])
+                if key.get("kid") == kid
+            ),
+            None,
+        )
+        if key_data is None:
+            return False
+        public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(key_data)
+        claims = pyjwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            audience="agent-server",
+            issuer="mcp-auth-service",
+        )
+        return not claims.get("exp") or float(claims["exp"]) > time.time() + 30
+    except (ImportError, ValueError, TypeError, KeyError, pyjwt.PyJWTError, httpx.HTTPError):
+        return False
+
+
+def _tool_calls_from_events(events: list[dict]) -> list[ToolCall]:
+    """Join canonical runtime tool events by sequence number."""
+    calls: dict[int, ToolCall] = {}
+    started_at: dict[int, float] = {}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        payload = event.get("payload") or {}
+        if not isinstance(payload, dict):
+            continue
+        sequence = payload.get("seq")
+        if not isinstance(sequence, int):
+            continue
+        event_type = event.get("event_type")
+        if event_type == "tool_started":
+            calls[sequence] = ToolCall(
+                tool=str(payload.get("tool") or "?"),
+                input=dict(payload.get("input") or {}),
+                status="started",
+            )
+            timestamp = event.get("timestamp")
+            if isinstance(timestamp, (int, float)):
+                started_at[sequence] = float(timestamp)
+        elif event_type == "tool_completed":
+            call = calls.setdefault(
+                sequence,
+                ToolCall(tool=str(payload.get("tool") or "?")),
+            )
+            output = str(payload.get("output_preview") or "")
+            call.output = output
+            call.status = (
+                "error"
+                if payload.get("status") == "error"
+                or re.search(
+                    r"^(?:content=)?['\"]?(?:❌|Error \[TOOL_|ERROR:)",
+                    output.strip(),
+                )
+                else "ok"
+            )
+            timestamp = event.get("timestamp")
+            if sequence in started_at and isinstance(timestamp, (int, float)):
+                call.duration_ms = max(
+                    0,
+                    int((float(timestamp) - started_at[sequence]) * 1000),
+                )
+    return [calls[sequence] for sequence in sorted(calls)]
+
+
+def _usage_from_events(events: list[dict]) -> tuple[int, int]:
+    calls = [
+        event.get("payload") or {}
+        for event in events
+        if isinstance(event, dict)
+        if event.get("event_type") == "model_call_completed"
+        and isinstance(event.get("payload") or {}, dict)
+    ]
+    return (
+        sum(int(call.get("prompt_tokens") or 0) for call in calls),
+        sum(int(call.get("completion_tokens") or 0) for call in calls),
+    )
+
+
+def _runtime_failure(events_body: dict) -> str | None:
+    status = str(events_body.get("status") or "")
+    if status in {"", "completed"}:
+        return None
+    terminal_reason = events_body.get("terminal_reason") or status
+    events = events_body.get("events") or []
+    terminal = next(
+        (
+            event.get("payload") or {}
+            for event in reversed(events)
+            if event.get("event_type") in {"run_failed", "run_cancelled"}
+        ),
+        {},
+    )
+    detail = terminal.get("error_message") or terminal_reason
+    return f"runtime {status} [{terminal_reason}]: {detail}"
+
+
+def _runtime_event_issues(events: Any, status: str) -> list[str]:
+    """Validate the canonical run timeline before using it for scoring."""
+    if not isinstance(events, list):
+        return ["runtime events payload is not a list"]
+    issues: list[str] = []
+    event_sequences: set[int] = set()
+    previous_event_sequence: int | None = None
+    event_types: list[str] = []
+    tool_starts: dict[int, str] = {}
+    tool_completions: dict[int, str] = {}
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            issues.append(f"runtime event {index} is not an object")
+            continue
+        event_type = event.get("event_type")
+        payload = event.get("payload")
+        sequence = event.get("event_seq")
+        if not isinstance(event_type, str) or not isinstance(payload, dict):
+            issues.append(f"runtime event {index} has invalid type or payload")
+            continue
+        event_types.append(event_type)
+        if not isinstance(sequence, int):
+            issues.append(f"runtime event {index} has no integer event_seq")
+        elif sequence in event_sequences:
+            issues.append(f"duplicate runtime event_seq: {sequence}")
+        else:
+            event_sequences.add(sequence)
+            if previous_event_sequence is not None and sequence <= previous_event_sequence:
+                issues.append(
+                    f"runtime event_seq is not increasing: {previous_event_sequence}, {sequence}"
+                )
+            previous_event_sequence = sequence
+        tool_sequence = payload.get("seq")
+        tool_name = payload.get("tool")
+        if event_type in {"tool_started", "tool_completed"} and (
+            not isinstance(tool_sequence, int) or not isinstance(tool_name, str)
+        ):
+            issues.append(f"runtime event {index} has invalid tool seq or name")
+            continue
+        if event_type == "tool_started":
+            if tool_sequence in tool_starts:
+                issues.append(f"duplicate tool_started seq: {tool_sequence}")
+            tool_starts[tool_sequence] = tool_name
+        elif event_type == "tool_completed":
+            if tool_sequence in tool_completions:
+                issues.append(f"duplicate tool_completed seq: {tool_sequence}")
+            tool_completions[tool_sequence] = tool_name
+            if payload.get("status") not in {"ok", "error"}:
+                issues.append(f"tool_completed seq {tool_sequence} has invalid status")
+
+    if "run_started" not in event_types:
+        issues.append("runtime timeline missing run_started")
+    terminal_by_status = {
+        "completed": "run_completed",
+        "failed": "run_failed",
+        "cancelled": "run_cancelled",
+    }
+    expected_terminal = terminal_by_status.get(status)
+    if expected_terminal is None:
+        issues.append(f"runtime timeline has non-terminal status: {status!r}")
+    elif expected_terminal not in event_types:
+        issues.append(f"runtime timeline missing {expected_terminal}")
+    terminal_events = [
+        event_type
+        for event_type in event_types
+        if event_type in set(terminal_by_status.values())
+    ]
+    if len(terminal_events) != 1:
+        issues.append(f"runtime timeline has {len(terminal_events)} terminal events")
+    unmatched_starts = tool_starts.keys() - tool_completions.keys()
+    unmatched_completions = tool_completions.keys() - tool_starts.keys()
+    if unmatched_starts:
+        issues.append(f"tool calls missing completion: {sorted(unmatched_starts)}")
+    if unmatched_completions:
+        issues.append(f"tool completions missing start: {sorted(unmatched_completions)}")
+    for sequence in tool_starts.keys() & tool_completions.keys():
+        if tool_starts[sequence] != tool_completions[sequence]:
+            issues.append(
+                f"tool seq {sequence} name mismatch: "
+                f"{tool_starts[sequence]} != {tool_completions[sequence]}"
+            )
+    return issues
+
+
+async def _fetch_run_timeline(
+    client: httpx.AsyncClient,
+    agent_url: str,
+    jwt: str,
+    run_id: str,
+) -> dict:
+    response = await client.get(
+        f"{agent_url.rstrip('/')}/v1/runs/{run_id}/events",
+        headers={"Authorization": f"Bearer {jwt}"},
+        timeout=HTTP_TIMEOUT,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 # ── Loading cases ────────────────────────────────────────────────────
@@ -88,38 +327,30 @@ def _ensure_jwt(jwt_file: str, auth_url: str) -> str:
     p = Path(jwt_file)
     if p.exists():
         existing = p.read_text().strip()
-        if existing:
-            # A stale cache otherwise turns every case into a misleading
-            # 401 quality failure. Decode only the expiry claim locally; the
-            # auth service remains the source of truth for signature checks.
-            try:
-                import jwt as pyjwt
-                claims = pyjwt.decode(existing, options={"verify_signature": False})
-                if not claims.get("exp") or float(claims["exp"]) > time.time() + 30:
-                    return existing
-            except Exception:
-                # Preserve compatibility with environments without PyJWT;
-                # login below refreshes the token when decoding is unavailable.
-                pass
+        if existing and _cached_token_matches_auth(existing, auth_url):
+            os.chmod(p, 0o600)
+            return existing
     log.info("minting fresh JWT (file empty/missing: %s)", jwt_file)
+    username, password = _eval_identity(jwt_file)
     with httpx.Client(timeout=10) as c:
-        # signup is idempotent — ignore 409/400.
-        try:
-            c.post(
-                f"{auth_url}/auth/signup",
-                json={"username": "test", "password": "testpass1234",
-                      "tenant_id": "default", "email": "test@test.com"},
-            )
-        except httpx.HTTPError:
-            pass
+        signup = c.post(
+            f"{auth_url}/auth/signup",
+            json={
+                "username": username,
+                "password": password,
+                "tenant_id": "default",
+                "email": f"{username}@example.test",
+            },
+        )
+        if signup.status_code not in {200, 201, 409}:
+            signup.raise_for_status()
         r = c.post(
             f"{auth_url}/auth/login",
-            json={"username": "test", "password": "testpass1234"},
+            json={"username": username, "password": password},
         )
         r.raise_for_status()
         jwt = r.json()["access_token"]
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(jwt)
+    _write_private_text(p, jwt)
     return jwt
 
 
@@ -184,29 +415,55 @@ async def _run_one(client: httpx.AsyncClient, agent_url: str, jwt: str,
 
     choice = (body.get("choices") or [{}])[0]
     content = (choice.get("message") or {}).get("content", "") or ""
-    markers = parse_tool_markers(content)
-
-    # Pair {action:start}/{action:end} markers into ToolCall objects.
-    # Many agents emit only "start" markers (we don't have a result echo),
-    # in which case we still record the call with empty output.
+    run_id = body.get("run_id") or r.headers.get("X-Run-ID")
+    runtime_events: list[dict] = []
+    trace_source = "none"
+    runtime_error: str | None = None
     tool_calls: list[ToolCall] = []
-    pending: dict[str, ToolCall] = {}
-    for m in markers:
-        tool = m.get("tool", "?")
-        action = m.get("action", "start")
-        if action == "start":
-            tc = ToolCall(tool=tool, input=m.get("input") or {})
-            tool_calls.append(tc)
-            pending[tool] = tc                    # latest call wins (good enough)
-        elif action in ("end", "result", "complete"):
-            tc = pending.pop(tool, None) or tool_calls[-1] if tool_calls else None
-            if tc is not None:
-                tc.output = str(m.get("output", ""))[:500]
-                if "duration_ms" in m:
-                    tc.duration_ms = int(m["duration_ms"])
-                tc.status = m.get("status", "ok")
+    prompt_tokens = 0
+    completion_tokens = 0
+
+    if run_id:
+        try:
+            timeline = await _fetch_run_timeline(client, agent_url, jwt, str(run_id))
+            raw_events = timeline.get("events")
+            event_issues = _runtime_event_issues(raw_events, str(timeline.get("status") or ""))
+            runtime_events = list(raw_events) if isinstance(raw_events, list) else []
+            trace_source = "runtime_events"
+            tool_calls = _tool_calls_from_events(runtime_events)
+            prompt_tokens, completion_tokens = _usage_from_events(runtime_events)
+            errors = event_issues
+            failure = _runtime_failure(timeline)
+            if failure:
+                errors.append(failure)
+            runtime_error = "; ".join(errors) or None
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+            runtime_error = f"runtime event fetch failed: {type(error).__name__}: {error}"
+    else:
+        markers = parse_tool_markers(content)
+
+        # Legacy compatibility for servers that do not expose run timelines.
+        pending: dict[str, ToolCall] = {}
+        for marker in markers:
+            tool = marker.get("tool", "?")
+            action = marker.get("action", "start")
+            if action == "start":
+                call = ToolCall(tool=tool, input=marker.get("input") or {})
+                tool_calls.append(call)
+                pending[tool] = call
+            elif action in ("end", "result", "complete"):
+                call = pending.pop(tool, None) or (tool_calls[-1] if tool_calls else None)
+                if call is not None:
+                    call.output = str(marker.get("output", ""))[:500]
+                    if "duration_ms" in marker:
+                        call.duration_ms = int(marker["duration_ms"])
+                    call.status = marker.get("status", "ok")
+        trace_source = "legacy_markers" if markers else "none"
 
     usage = body.get("usage") or {}
+    if trace_source != "runtime_events":
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
     # Final answer = the assistant content with tool markers stripped, so
     # `answer_grounded` matches against the user-visible text.
     import re as _re
@@ -215,9 +472,10 @@ async def _run_one(client: httpx.AsyncClient, agent_url: str, jwt: str,
     return Trajectory(
         case_id=case.id, prompt=case.prompt, final_answer=final,
         tool_calls=tool_calls, raw_response=body, latency_ms=latency_ms,
-        prompt_tokens=int(usage.get("prompt_tokens") or 0),
-        completion_tokens=int(usage.get("completion_tokens") or 0),
-        http_status=200,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        http_status=200, error=runtime_error, run_id=str(run_id) if run_id else None,
+        trace_source=trace_source, runtime_events=runtime_events,
     )
 
 
@@ -475,6 +733,15 @@ def cli() -> int:
                     "prompt_tokens": t.prompt_tokens,
                     "completion_tokens": t.completion_tokens,
                     "http_status": t.http_status,
+                    "run_id": t.run_id,
+                    "trace_source": t.trace_source,
+                    "runtime_events_sha256": (
+                        hashlib.sha256(
+                            json.dumps(t.runtime_events, sort_keys=True).encode()
+                        ).hexdigest()
+                        if t.runtime_events
+                        else None
+                    ),
                     "error": t.error,
                 }) + "\n")
 

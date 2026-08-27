@@ -1,0 +1,79 @@
+{
+  "protocol": 1,
+  "base_commit": "164b4b133a9763ec79bbb11b4849367511737fb2",
+  "implementation": {
+    "note": "The experiment used an uncommitted refactoring over base_commit; these hashes pin the exact relevant contents.",
+    "sha256": {
+      "platform/agent-server/agents/coding-agent.yaml": "9b04b463dbffbd6495145dd75d3c45b59d6a2bb2e669122bf9b9bcd3063fe15f",
+      "platform/agent-server/app/agent/agent_graph/factory.py": "d7c24a572e9f0e3897b0d12ca96529bf784da7e00716daff0502aa0f07c13d40",
+      "platform/agent-server/app/agent/agent_graph/builder.py": "4f40852ef467f03878f845628d2c741263297702e39c844d32908805761b0639",
+      "platform/agent-server/app/agent/agent_graph/nodes/context.py": "d9030826e193ed60701a41baceb8b87a878e350017c1e66b00d86a4564f5951f",
+      "platform/agent-server/app/agent/agent_graph/nodes/intent_router.py": "411f8d26de136566db29fa661c862c4d26706df059f71fb22d5e795308329fac",
+      "platform/agent-server/app/agent/agent_graph/nodes/model.py": "c54d518463e4764150808b85e0fefc4e6c74fdc1de92faa1b58169a547b436d7",
+      "platform/agent-server/app/agent/engine/registry.py": "fc95207544c7d1b5854bbe72df15eb5ab37cd3fe1e7b8c18db5e4f3bb581a068",
+      "platform/agent-server/app/agent/engine/langgraph.py": "e130dc8905eca207fa2e1c5c95a723187fed4d12520b7f791cae15632487a131",
+      "platform/agent-server/app/agent/model/factory.py": "2eb06e3ca4303a7da6abcb27a1ff9de76dc7f7d9ea7de207ecd33482d5c6821c",
+      "platform/agent-server/app/api/chat.py": "63858ab416b5674cb79428126524d90c06474a6390cb8f15ffc1010997a53be1",
+      "platform/agent-server/app/runtime/chat_stream.py": "e60c7e60bbb9caca93a40ac4aee0456c98e82e0a53b7b85e4f6197d5849f1cef",
+      "platform/agent-server/app/runtime/runner.py": "7bd13ab16148e4d9e28537e1d16ca66c95b002cd0dfbd705db3baa9ffa351b17",
+      "platform/agent-server/app/runtime/composition.py": "943867daf529d8852798adf94c5de987369b3abb2f4f3b0ced1860bd2529dacb",
+      "platform/agent-server/app/runtime/observers/default.py": "c46a0ca859bde1f4c1fbacc39d01d8f4049752548ca747e06c66e9f6f1d795a0",
+      "platform/agent-server/app/runtime/observers/provenance.py": "8dbdab4cecc2a4f114d5628928ff6498a3788bb8cc3c14ba4816bb344178d0ee",
+      "platform/agent-server/app/events/model_provenance.py": "4cb177486dcebbdbd192bed6f4099edae1259058a6ebfc6e59452f4ad103f65d",
+      "platform/eval-harness/eval/warm_cache.py": "20d1f13f184ed0982ba5ffc312bb4fca8775b1bf413da905c190c1a480d40ee8",
+      "platform/eval-harness/experiments/local_runtime_20260826/run.py": "db42cc532e8c442a56907cd53ac3c0f762f99dd323c75a6d2b9172be554f9c8b",
+      "platform/agent-server/tests/test_local_runtime_effect.py": "06a7ae8d894cee8e751ac1eaef6b322115d21ece7190b9616ec0561345d71c81",
+      "platform/agent-server/tests/test_runtime_observers.py": "450ef06fee342e37391244a58b8c33613c2b1dbeb10ed73fe8710fd9cc6e0bbd"
+    }
+  },
+  "agent_url": "http://127.0.0.1:8580",
+  "agent_model": "coding-agent",
+  "ollama_url": "http://127.0.0.1:11434",
+  "ollama": {
+    "model": "qwen2.5:7b",
+    "digest": "845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e",
+    "size_bytes": 4683087332,
+    "modified_at": "2026-03-20T10:54:36.100368518+08:00",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "qwen2",
+      "families": [
+        "qwen2"
+      ],
+      "parameter_size": "7.6B",
+      "quantization_level": "Q4_K_M",
+      "context_length": 32768,
+      "embedding_length": 3584
+    },
+    "template_sha256": "eb4402837c7829a690fa845de4d7f3fd842c2adee476d5341da8a46ea9255175",
+    "context_lengths": {
+      "qwen2.context_length": 32768
+    }
+  },
+  "host": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "python": "3.13.3"
+  },
+  "prompts": [
+    "read README.md",
+    "Using the README content from the previous turn, name the main runtime components."
+  ],
+  "cold_reset": "POST /api/generate with keep_alive=0 before every pair",
+  "selection": "all generated pairs are retained; validation is automatic",
+  "trials": [
+    {
+      "pair": 1,
+      "file": "pair-1.json",
+      "accepted": true,
+      "errors": []
+    },
+    {
+      "pair": 2,
+      "file": "pair-2.json",
+      "accepted": true,
+      "errors": []
+    }
+  ]
+}

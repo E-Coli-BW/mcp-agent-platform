@@ -108,6 +108,55 @@ cp runs/2026-05-29T10-23-12/summary.json baselines/master.json
     --baseline baselines/master.json --min-pass-rate 0.90
 ```
 
+## Warm-cache benchmark
+
+The regular harness intentionally creates independent sessions. Use the
+warm-cache benchmark to measure local inference reuse across sequential turns
+in one session:
+
+```bash
+cd platform/eval-harness
+../agent-server/.venv/bin/pip install -e .
+../agent-server/.venv/bin/eval-warm-cache \
+  --agent-url http://localhost:8580 \
+  --output runs/warm-cache.json
+```
+
+Repeat `--prompt` to replace the default two-turn README scenario. The report
+joins each response to `/v1/runs/{run_id}/events` and includes HTTP latency,
+model-call count, provider-native prefill/decode timings and tokens/sec when the
+backend supplies them, plus warm-to-cold ratios for the first two turns.
+Prompts and answer previews are omitted by default; pass `--include-content`
+only when the report destination is appropriate for source-derived content.
+For non-streaming providers, `ttft_ms` is `load + prefill` and is marked with
+`ttft_estimated: true`; streamed first-chunk measurements are marked false.
+
+## Fixture-backed coding E2E
+
+`eval-coding-e2e` exercises five common coding workflows against a fresh copy
+of a realistic order-service fixture: architecture, API documentation, business
+flow, method improvement, and feature addition. It joins durable run events,
+captures Git diffs, runs public tests, and injects mutation hidden tests only
+after the Agent finishes.
+
+```bash
+# Deterministic harness/oracle validation; no model required.
+../agent-server/.venv/bin/eval-coding-e2e --preflight-only
+
+# Live architecture + feature smoke.
+../agent-server/.venv/bin/eval-coding-e2e --smoke
+```
+
+Live cases run serially because the local Agent has one active workspace. The
+runner restores the previous workspace and removes each temporary Git repository
+unless `--keep-workspaces` is set. Reports include prompts, answers, diffs, and
+test output; treat them as source-derived internal data.
+
+Failures are classified as `harness`, `runtime`, `model_runtime_protocol`, or
+`capability_or_agent_policy`; see
+[`suites/coding_e2e/README.md`](suites/coding_e2e/README.md) for the exact
+contracts and limitations.
+
 ## n-of-k flakiness tolerance
 
 LLM-in-loop evals at T>0 are non-deterministic. A single run is **not

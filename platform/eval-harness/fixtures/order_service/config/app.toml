@@ -1,0 +1,2 @@
+service_name = "order-service"
+max_items_per_order = 10
