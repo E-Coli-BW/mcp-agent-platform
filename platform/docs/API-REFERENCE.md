@@ -81,7 +81,7 @@
 | Method | Endpoint | Service | Description |
 |--------|----------|---------|-------------|
 | GET | `/health` | Agent | 健康检查 |
-| GET | `/metrics` | Agent | 请求指标（QPS、延迟） |
+| GET | `/metrics` | Agent | 全局请求指标（QPS、延迟，需 Bearer JWT 与 `*` 权限） |
 | GET | `/api/usage` | Agent | Token 用量与成本 |
 | GET | `/api/prompts` | Agent | Prompt 版本与灰度配置 |
 | GET | `/v1/runs/{run_id}/events?after_seq=0` | Agent | 查询 runtime run 事件流（按 tenant 隔离，支持 cursor） |

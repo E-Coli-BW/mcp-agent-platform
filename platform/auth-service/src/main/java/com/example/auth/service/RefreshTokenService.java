@@ -44,7 +44,14 @@ public class RefreshTokenService {
      *
      * @return the raw refresh token (only returned once, never stored in plaintext)
      */
+    @Transactional
     public String createRefreshToken(Long userId, String deviceInfo) {
+        userRepo.findByIdForUpdate(userId)
+                .orElseThrow(() -> new IllegalStateException("User not found"));
+        return persistRefreshToken(userId, deviceInfo);
+    }
+
+    private String persistRefreshToken(Long userId, String deviceInfo) {
         String rawToken = UUID.randomUUID().toString();
         String tokenHash = sha256(rawToken);
 
@@ -63,10 +70,21 @@ public class RefreshTokenService {
      * Validate a refresh token and issue a new access token + refresh token pair.
      * Implements token rotation: old refresh token is revoked.
      */
+    @Transactional(dontRollbackOn = InvalidRefreshTokenException.class)
     public TokenPair refreshAccessToken(String rawRefreshToken) {
         String tokenHash = sha256(rawRefreshToken);
-        RefreshToken stored = refreshTokenRepo.findByTokenHashAndRevokedFalse(tokenHash)
+        Long userId = refreshTokenRepo.findUserIdByActiveTokenHash(tokenHash)
+            .orElseThrow(() -> new InvalidRefreshTokenException("Invalid or revoked refresh token"));
+
+        AuthUser user = userRepo.findByIdForUpdate(userId)
+            .orElseThrow(() -> new InvalidRefreshTokenException("User not found"));
+
+        RefreshToken stored = refreshTokenRepo.findByTokenHashForUpdate(tokenHash)
                 .orElseThrow(() -> new InvalidRefreshTokenException("Invalid or revoked refresh token"));
+
+        if (stored.isRevoked()) {
+            throw new InvalidRefreshTokenException("Invalid or revoked refresh token");
+        }
 
         if (stored.getExpiresAt().isBefore(Instant.now())) {
             stored.setRevoked(true);
@@ -77,15 +95,12 @@ public class RefreshTokenService {
         stored.setRevoked(true);
         refreshTokenRepo.save(stored);
 
-        AuthUser user = userRepo.findById(stored.getUserId())
-                .orElseThrow(() -> new InvalidRefreshTokenException("User not found"));
-
         if (!user.isEnabled()) {
             throw new InvalidRefreshTokenException("User account is disabled");
         }
 
         String accessToken = buildAccessToken(user);
-        String newRefreshToken = createRefreshToken(user.getId(), stored.getDeviceInfo());
+        String newRefreshToken = persistRefreshToken(user.getId(), stored.getDeviceInfo());
 
         return new TokenPair(accessToken, newRefreshToken, tokenProperties.getAccessTtlSeconds());
     }
@@ -95,6 +110,9 @@ public class RefreshTokenService {
      */
     @Transactional
     public void revokeAllForUser(Long userId) {
+        if (userRepo.findByIdForUpdate(userId).isEmpty()) {
+            return;
+        }
         refreshTokenRepo.revokeAllByUserId(userId);
     }
 

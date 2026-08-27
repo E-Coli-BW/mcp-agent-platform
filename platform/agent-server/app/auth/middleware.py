@@ -3,16 +3,11 @@
 Fetches JWKS from auth-service, verifies RS256 signatures, extracts tenant context.
 """
 
-import time
 import logging
-from dataclasses import dataclass
 from contextvars import ContextVar
-from typing import Optional
+from dataclasses import dataclass
 
-import httpx
-import jwt  # PyJWT
-from jwt import PyJWKClient
-from fastapi import Request, HTTPException
+from fastapi import HTTPException, Request
 
 from app.config import settings
 
@@ -20,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Context variable for tenant propagation through async call stack
 tenant_context: ContextVar[str] = ContextVar("tenant_id", default="default")
+_VERIFIED_CONTEXT_MARKER = object()
 
 
 @dataclass
@@ -30,21 +26,28 @@ class AuthContext:
     permissions: list[str]
 
 
-# JWKS cache
-_jwks_client: Optional[PyJWKClient] = None
-_jwks_last_refresh: float = 0
-_JWKS_CACHE_TTL: float = 300  # 5 minutes
+def cache_verified_auth_context(request: Request, context: AuthContext) -> None:
+    """Cache identity that was produced by this request's JWT verification."""
+    request.state.auth_context = context
+    request.state._verified_auth_context_marker = _VERIFIED_CONTEXT_MARKER
 
 
-def _get_jwks_client() -> PyJWKClient:
-    """Get or create a PyJWKClient with 5-minute cache."""
-    global _jwks_client, _jwks_last_refresh
-    now = time.time()
-    if _jwks_client is None or (now - _jwks_last_refresh) > _JWKS_CACHE_TTL:
-        jwks_url = f"{settings.auth_service_url}/auth/jwks"
-        _jwks_client = PyJWKClient(jwks_url, cache_keys=True)
-        _jwks_last_refresh = now
-    return _jwks_client
+def auth_context_from_payload(payload: dict) -> AuthContext | None:
+    """Build a trusted request identity from verified JWT claims."""
+    user_id = payload.get("sub")
+    tenant_id = payload.get("tenant_id")
+    permissions = payload.get("permissions") or []
+    if not isinstance(user_id, str) or not user_id:
+        return None
+    if not isinstance(tenant_id, str) or not tenant_id:
+        return None
+    if not isinstance(permissions, list):
+        return None
+    return AuthContext(
+        user_id=user_id,
+        tenant_id=tenant_id,
+        permissions=[str(permission) for permission in permissions],
+    )
 
 
 async def require_auth(request: Request) -> AuthContext:
@@ -55,67 +58,36 @@ async def require_auth(request: Request) -> AuthContext:
         async def endpoint(auth: AuthContext = Depends(require_auth)):
             print(auth.tenant_id)
     """
-    # 1. Extract token from Authorization header
+    request_state = getattr(request, "state", None)
+    verified = getattr(request_state, "auth_context", None)
+    marker = getattr(request_state, "_verified_auth_context_marker", None)
+    if isinstance(verified, AuthContext) and marker is _VERIFIED_CONTEXT_MARKER:
+        tenant_context.set(verified.tenant_id)
+        return verified
+
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
             detail={"error": "unauthorized", "detail": "Missing or invalid Authorization header"}
         )
-    token = auth_header[7:]  # Strip "Bearer "
+    token = auth_header[7:]
+    from app.middleware.jwt_auth import verify_access_token
 
-    # 2. Verify JWT signature and decode claims
-    #    Try RS256 (auth-service JWKS) first, fall back to HMAC (dev secret)
-    payload = None
-
-    # RS256 via JWKS
-    try:
-        jwks_client = _get_jwks_client()
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-        payload = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience="agent-server",
-            issuer="mcp-auth-service",
-        )
-    except jwt.ExpiredSignatureError:
+    payload = await verify_access_token(
+        token,
+        auth_url=settings.auth_service_url,
+        jwt_secret=settings.jwt_secret,
+        allow_legacy_hmac=settings.allow_legacy_hmac_auth,
+    )
+    context = auth_context_from_payload(payload) if payload is not None else None
+    if context is None:
+        logger.warning("Bearer token verification failed")
         raise HTTPException(
             status_code=401,
-            detail={"error": "unauthorized", "detail": "Token has expired"}
+            detail={"error": "unauthorized", "detail": "Token verification failed"},
         )
-    except jwt.InvalidTokenError as e:
-        logger.debug("RS256 verification failed, trying HMAC: %s", e)
-    except Exception as e:
-        logger.debug("JWKS unavailable, trying HMAC fallback: %s", e)
-
-    # HMAC fallback (for local dev without auth-service)
-    if payload is None:
-        try:
-            payload = jwt.decode(
-                token,
-                settings.jwt_secret,
-                algorithms=["HS256"],
-                options={"verify_aud": False, "verify_iss": False},
-            )
-        except jwt.ExpiredSignatureError:
-            raise HTTPException(
-                status_code=401,
-                detail={"error": "unauthorized", "detail": "Token has expired"}
-            )
-        except Exception as e:
-            logger.warning("JWT verification failed (both RS256 and HMAC): %s", e)
-            raise HTTPException(
-                status_code=401,
-                detail={"error": "unauthorized", "detail": "Token verification failed"}
-            )
-
-    # 3. Extract claims
-    user_id = payload.get("sub", "")
-    tenant_id = payload.get("tenant_id", "default")
-    permissions = payload.get("permissions", [])
-
-    # 4. Set context variable for downstream propagation
-    tenant_context.set(tenant_id)
-
-    return AuthContext(user_id=user_id, tenant_id=tenant_id, permissions=permissions)
+    if request_state is not None:
+        cache_verified_auth_context(request, context)
+    tenant_context.set(context.tenant_id)
+    return context

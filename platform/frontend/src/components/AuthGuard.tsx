@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { isLoggedIn, tryRefresh } from '@/lib/auth';
+import { getAccessToken, isLoggedIn, tryRefresh } from '@/lib/auth';
 
 /**
  * Route guard: redirects to /login if not authenticated.
@@ -12,6 +12,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     (async () => {
+      if (getAccessToken()) {
+        setChecking(false);
+        return;
+      }
       if (isLoggedIn()) {
         const ok = await tryRefresh();
         if (!ok && !isLoggedIn()) {

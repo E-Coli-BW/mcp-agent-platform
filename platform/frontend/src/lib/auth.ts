@@ -10,6 +10,8 @@
 
 let accessToken: string | null = null;
 let refreshTokenValue: string | null = null; // in-memory only — not persisted (XSS safe)
+let refreshInFlight: Promise<boolean> | null = null;
+let authGeneration = 0;
 
 export interface AuthState {
   user: string | null;
@@ -73,6 +75,7 @@ export async function login(
     throw new Error(data.error_description || data.error || 'Login failed');
   }
 
+  authGeneration += 1;
   accessToken = data.access_token;
   refreshTokenValue = data.refresh_token;
   state.user = username;
@@ -113,37 +116,43 @@ export async function signup(
 /** Silent refresh: exchange refresh token for new token pair */
 export async function tryRefresh(): Promise<boolean> {
   if (!refreshTokenValue) return false;
+  if (refreshInFlight) return refreshInFlight;
+  const generation = authGeneration;
+  const refreshTokenUsed = refreshTokenValue;
+  const operation = (async () => {
+    try {
+      const resp = await fetch('/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshTokenUsed }),
+      });
+      if (!resp.ok) return false;
+      const data = await resp.json();
+      if (
+        generation !== authGeneration
+        || refreshTokenValue !== refreshTokenUsed
+      ) return false;
+      accessToken = data.access_token;
+      refreshTokenValue = data.refresh_token;
+      state.roles = parseJwtRoles(data.access_token);
+      notify(state);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  refreshInFlight = operation;
   try {
-    const resp = await fetch('/auth/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshTokenValue }),
-    });
-    if (!resp.ok) return false;
-    const data = await resp.json();
-    accessToken = data.access_token;
-    refreshTokenValue = data.refresh_token;
-    state.roles = parseJwtRoles(data.access_token);
-    // SECURITY: refresh token stays in memory only (no localStorage)
-    notify(state);
-    return true;
-  } catch {
-    return false;
+    return await operation;
+  } finally {
+    if (refreshInFlight === operation) refreshInFlight = null;
   }
 }
 
 /** Logout: blacklist token + revoke refresh tokens */
 export async function logout(): Promise<void> {
-  if (accessToken) {
-    try {
-      await fetch('/auth/logout', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-    } catch {
-      /* best effort */
-    }
-  }
+  const tokenToRevoke = accessToken;
+  authGeneration += 1;
   accessToken = null;
   refreshTokenValue = null;
   state.user = null;
@@ -153,6 +162,17 @@ export async function logout(): Promise<void> {
   localStorage.removeItem('auth_tenant');
   localStorage.removeItem('auth_refresh');
   notify(null);
+
+  if (tokenToRevoke) {
+    try {
+      await fetch('/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenToRevoke}` },
+      });
+    } catch {
+      /* best effort */
+    }
+  }
 }
 
 /**
@@ -164,14 +184,25 @@ export async function authFetch(
   opts: RequestInit = {},
 ): Promise<Response> {
   const headers = new Headers(opts.headers);
-  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
+  const generation = authGeneration;
+  const tokenUsed = accessToken;
+  if (tokenUsed) headers.set('Authorization', `Bearer ${tokenUsed}`);
 
   let resp = await fetch(url, { ...opts, headers });
 
-  if (resp.status === 401 && refreshTokenValue) {
-    const refreshed = await tryRefresh();
-    if (refreshed) {
-      headers.set('Authorization', `Bearer ${accessToken}`);
+  if (
+    resp.status === 401
+    && refreshTokenValue
+    && generation === authGeneration
+  ) {
+    let refreshed = accessToken && accessToken !== tokenUsed
+      ? true
+      : await tryRefresh();
+    if (generation !== authGeneration) return resp;
+    if (!refreshed && accessToken && accessToken !== tokenUsed) refreshed = true;
+    const retryToken = accessToken;
+    if (refreshed && retryToken) {
+      headers.set('Authorization', `Bearer ${retryToken}`);
       resp = await fetch(url, { ...opts, headers });
     } else {
       await logout();

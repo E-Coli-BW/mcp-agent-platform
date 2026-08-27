@@ -5,19 +5,26 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth_proxy import router as auth_proxy_router
 from app.api.chat import router as chat_router
 from app.api.runtime_control import router as runtime_control_router
 from app.api.workspace import router as workspace_router
+from app.auth.middleware import AuthContext, require_auth
 from app.config import settings
 from app.middleware.jwt_auth import JwtAuthMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.tracing import TracingMiddleware
 
 logger = logging.getLogger(__name__)
+AUTH_DEPENDENCY = Depends(require_auth)
+
+
+def _require_super_admin(auth: AuthContext) -> None:
+    if "*" not in auth.permissions:
+        raise HTTPException(status_code=403, detail="super-admin permission required")
 
 # Startup security check
 if "DO-NOT-USE" in settings.jwt_secret:
@@ -45,8 +52,7 @@ async def lifespan(app: FastAPI):
     # the asyncio event loop under the old urllib implementation).
     try:
         from app.middleware.jwt_auth import prewarm_jwks
-        auth_url = os.environ.get("AUTH_SERVICE_URL", "http://localhost:8090")
-        await prewarm_jwks(auth_url)
+        await prewarm_jwks(settings.auth_service_url)
     except Exception as e:  # noqa: BLE001 - optional startup prewarm fails open
         logger.warning("JWKS prewarm skipped: %s", e)
 
@@ -116,6 +122,7 @@ app.add_middleware(
     JwtAuthMiddleware,
     jwt_secret=settings.jwt_secret,
     protected_prefixes=["/v1/"],
+    auth_service_url=settings.auth_service_url,
 )
 
 # OpenTelemetry tracing + metrics (outermost — wraps all other middleware)
@@ -177,14 +184,15 @@ async def list_agents():
 
 
 @app.get("/metrics")
-async def metrics():
+async def metrics(auth: AuthContext = AUTH_DEPENDENCY):
     """Prometheus-style metrics for monitoring dashboards."""
+    _require_super_admin(auth)
     from app.middleware.tracing import get_metrics_summary
     return get_metrics_summary()
 
 
 @app.get("/api/prompts")
-async def prompts_info():
+async def prompts_info(_auth: AuthContext = AUTH_DEPENDENCY):
     """Prompt version registry — available versions, canary config, tenant overrides."""
     from app.agent.execution_policy.system_prompts import (
         _parse_tenant_overrides,
@@ -207,14 +215,17 @@ async def prompts_info():
 
 
 @app.get("/api/usage")
-async def usage():
+async def usage(_auth: AuthContext = AUTH_DEPENDENCY):
     """Token usage and cost tracking."""
     from app.usage import get_usage_tracker
     return get_usage_tracker().get_summary()
 
 
 @app.post("/api/feedback")
-async def record_feedback(request: Request):
+async def record_feedback(
+    request: Request,
+    auth: AuthContext = AUTH_DEPENDENCY,
+):
     """Persist explicit user feedback for offline review and evaluation."""
     body = await request.json()
     rating = body.get("rating")
@@ -224,6 +235,8 @@ async def record_feedback(request: Request):
     from app.feedback.store import FEEDBACK_FILE, record_user_feedback
     entry = record_user_feedback(
         rating=rating,
+        user_id=auth.user_id,
+        tenant_id=auth.tenant_id,
         reason=body.get("reason"),
         agent=body.get("agent"),
         session_id=body.get("session_id"),
@@ -237,15 +250,16 @@ async def record_feedback(request: Request):
 
 
 @app.get("/api/reranker")
-async def reranker_info():
+async def reranker_info(_auth: AuthContext = AUTH_DEPENDENCY):
     """Learned reranker weights and feedback stats."""
     from app.rag.reranking.learned import get_learned_reranker
     return get_learned_reranker().get_weights_info()
 
 
 @app.post("/api/reranker/retrain")
-async def reranker_retrain():
+async def reranker_retrain(auth: AuthContext = AUTH_DEPENDENCY):
     """Build a candidate reranker artifact; promotion is a separate action."""
+    _require_super_admin(auth)
     from app.rag.reranking.learned import get_learned_reranker
     r = get_learned_reranker()
     candidate = r.retrain(min_samples=5, promote=False)
@@ -253,8 +267,9 @@ async def reranker_retrain():
 
 
 @app.post("/api/reranker/promote")
-async def reranker_promote():
+async def reranker_promote(auth: AuthContext = AUTH_DEPENDENCY):
     """Promote a reviewed candidate reranker and retain rollback state."""
+    _require_super_admin(auth)
     from app.rag.reranking.learned import get_learned_reranker
     r = get_learned_reranker()
     try:
@@ -266,8 +281,9 @@ async def reranker_promote():
 
 
 @app.post("/api/reranker/rollback")
-async def reranker_rollback():
+async def reranker_rollback(auth: AuthContext = AUTH_DEPENDENCY):
     """Restore the previous promoted reranker artifact."""
+    _require_super_admin(auth)
     from app.rag.reranking.learned import get_learned_reranker
     r = get_learned_reranker()
     try:
@@ -279,8 +295,12 @@ async def reranker_rollback():
 
 
 @app.post("/api/reranker/promote-gated")
-async def reranker_promote_gated(request: Request):
+async def reranker_promote_gated(
+    request: Request,
+    auth: AuthContext = AUTH_DEPENDENCY,
+):
     """Promote only with a supplied held-out evaluation and minimum lift."""
+    _require_super_admin(auth)
     from app.rag.reranking.learned import get_learned_reranker
     body = await request.json()
     try:
@@ -298,7 +318,7 @@ async def reranker_promote_gated(request: Request):
 
 
 @app.get("/api/reranker/evaluate")
-async def reranker_evaluate():
+async def reranker_evaluate(_auth: AuthContext = AUTH_DEPENDENCY):
     """Evaluate learned vs default reranker weights on held-out test set."""
     from app.rag.reranking.learned import get_learned_reranker
     result = get_learned_reranker().evaluate()

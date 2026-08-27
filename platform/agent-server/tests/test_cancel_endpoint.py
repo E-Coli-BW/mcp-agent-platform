@@ -55,7 +55,11 @@ def _mint_hmac_token(*, tenant_id: str, sub: str = "test-user") -> str:
         json.dumps({
             "sub": sub,
             "tenant_id": tenant_id,
+            "iss": "mcp-agent-local",
+            "aud": "agent-server",
+            "iat": int(time.time()),
             "exp": int(time.time()) + 300,  # 5-minute window
+            "jti": f"cancel-{tenant_id}-{sub}",
         }).encode()
     )
     signing_input = f"{header}.{payload}".encode()
@@ -64,8 +68,9 @@ def _mint_hmac_token(*, tenant_id: str, sub: str = "test-user") -> str:
 
 
 @pytest.fixture(autouse=True)
-def _reset_bus():
+def _reset_bus(monkeypatch):
     """Always start each test with a clean bus."""
+    monkeypatch.setattr(settings, "allow_legacy_hmac_auth", True)
     fleet_bus._reset_for_tests()
     yield
     fleet_bus._reset_for_tests()

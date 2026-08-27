@@ -28,7 +28,11 @@ def _mint_hmac_token(*, tenant_id: str, sub: str = "test-user") -> str:
         json.dumps({
             "sub": sub,
             "tenant_id": tenant_id,
+            "iss": "mcp-agent-local",
+            "aud": "agent-server",
+            "iat": int(time.time()),
             "exp": int(time.time()) + 300,
+            "jti": f"events-{tenant_id}-{sub}",
         }).encode()
     )
     signing_input = f"{header}.{payload}".encode()
@@ -41,7 +45,8 @@ def _auth_headers(tenant_id: str) -> dict[str, str]:
 
 
 @pytest.fixture(autouse=True)
-def _reset_recorder():
+def _reset_recorder(monkeypatch):
+    monkeypatch.setattr(settings, "allow_legacy_hmac_auth", True)
     asyncio.run(reset_run_recorder_for_tests())
     yield
     asyncio.run(reset_run_recorder_for_tests())

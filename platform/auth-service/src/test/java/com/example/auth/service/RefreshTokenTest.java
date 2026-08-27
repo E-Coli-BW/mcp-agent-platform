@@ -18,6 +18,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -42,6 +47,9 @@ class RefreshTokenTest {
 
     @Autowired
     private RefreshTokenRepository refreshTokenRepo;
+
+    @Autowired
+    private RefreshTokenService refreshTokenService;
 
     @BeforeEach
     void setup() {
@@ -113,6 +121,74 @@ class RefreshTokenTest {
                         .content("{\"refresh_token\":\"" + login.refreshToken() + "\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("invalid_token"));
+    }
+
+    @Test
+    void should_allowOnlyOneRotation_when_refreshTokenUsedConcurrently() throws Exception {
+        userService.signup("race-refresh", "password123", null, "tenant-race");
+        var login = userService.login("race-refresh", "password123");
+        var user = userRepo.findByUsername("race-refresh").orElseThrow();
+        var start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+
+        try {
+            List<Future<Boolean>> attempts = new ArrayList<>();
+            for (int index = 0; index < 2; index++) {
+                attempts.add(executor.submit(() -> {
+                    start.await();
+                    try {
+                        refreshTokenService.refreshAccessToken(login.refreshToken());
+                        return true;
+                    } catch (RefreshTokenService.InvalidRefreshTokenException expected) {
+                        return false;
+                    }
+                }));
+            }
+            start.countDown();
+
+            long successes = 0;
+            for (Future<Boolean> attempt : attempts) {
+                if (attempt.get()) successes++;
+            }
+
+            assertEquals(1, successes);
+            assertEquals(1, refreshTokenRepo.findByUserIdAndRevokedFalse(user.getId()).size());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void should_leaveNoActiveSession_when_refreshRacesWithLogout() throws Exception {
+        userService.signup("logout-race", "password123", null, "tenant-logout-race");
+        var login = userService.login("logout-race", "password123");
+        var user = userRepo.findByUsername("logout-race").orElseThrow();
+        var start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<?> refresh = executor.submit(() -> {
+                start.await();
+                try {
+                    refreshTokenService.refreshAccessToken(login.refreshToken());
+                } catch (RefreshTokenService.InvalidRefreshTokenException expected) {
+                    // Logout may win the race; either outcome is valid.
+                }
+                return null;
+            });
+            Future<?> logout = executor.submit(() -> {
+                start.await();
+                refreshTokenService.revokeAllForUser(user.getId());
+                return null;
+            });
+            start.countDown();
+            refresh.get();
+            logout.get();
+
+            assertTrue(refreshTokenRepo.findByUserIdAndRevokedFalse(user.getId()).isEmpty());
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test

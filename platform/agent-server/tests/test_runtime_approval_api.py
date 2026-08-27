@@ -34,7 +34,11 @@ def _auth_headers(tenant_id: str, user_id: str = "test-user") -> dict[str, str]:
             {
                 "sub": user_id,
                 "tenant_id": tenant_id,
+                "iss": "mcp-agent-local",
+                "aud": "agent-server",
+                "iat": int(time.time()),
                 "exp": int(time.time()) + 300,
+                "jti": f"approval-{tenant_id}-{user_id}",
             }
         ).encode()
     )
@@ -45,6 +49,7 @@ def _auth_headers(tenant_id: str, user_id: str = "test-user") -> dict[str, str]:
 
 @pytest.fixture
 def runtime_api(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "allow_legacy_hmac_auth", True)
     database = tmp_path / "runtime.sqlite3"
     registry = ApprovalRegistry(str(database))
     checkpoints = SQLiteCheckpointStore(database)

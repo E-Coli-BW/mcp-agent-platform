@@ -18,6 +18,7 @@ This test suite locks in:
 
 import asyncio
 import inspect
+import time
 
 import httpx
 import pytest
@@ -113,10 +114,36 @@ async def test_failure_with_stale_cache_returns_stale(httpx_mock):
     await jwt_auth._fetch_jwks("http://auth")
 
     # Force cache "expired" so the next call attempts a refresh
-    jwt_auth._jwks_cache_time = 0  # type: ignore[attr-defined]
+    jwt_auth._jwks_cache_time = (  # type: ignore[attr-defined]
+        time.time() - jwt_auth.JWKS_CACHE_TTL - 1
+    )
 
     # Next refresh fails — must keep serving the stale copy
     httpx_mock.add_exception(httpx.ConnectError("auth blip"))
     result = await jwt_auth._fetch_jwks("http://auth")
     assert result is not None
     assert result["keys"][0]["kid"] == "old"
+
+
+async def test_failure_rejects_cache_older_than_max_stale(httpx_mock):
+    httpx_mock.add_response(
+        url="http://auth/auth/jwks",
+        json={"keys": [{"kid": "old"}]},
+    )
+    await jwt_auth._fetch_jwks("http://auth")
+    jwt_auth._jwks_cache_time = (  # type: ignore[attr-defined]
+        time.time() - jwt_auth.JWKS_MAX_STALE_SECONDS - 1
+    )
+    httpx_mock.add_exception(httpx.ConnectError("auth outage"))
+
+    assert await jwt_auth._fetch_jwks("http://auth") is None
+
+
+async def test_rs256_rejects_token_without_kid(monkeypatch):
+    async def keys(_auth_url: str):
+        return {"keys": [{"kid": "k1"}]}
+
+    monkeypatch.setattr(jwt_auth, "_fetch_jwks", keys)
+    monkeypatch.setattr("jwt.get_unverified_header", lambda _token: {})
+
+    assert await jwt_auth._verify_rs256("token", "http://auth") is None
