@@ -20,6 +20,11 @@ npm run dev                          # → http://localhost:3000
 4. **Ollama** (optional) — for LLM responses: `ollama run qwen2.5:7b`
 5. **Docker** (optional) — for Redis + PostgreSQL (services degrade gracefully without them)
 
+> **24 GB local safety profile:** For the first live test, run only Auth Service,
+> Agent Server, Frontend, and Ollama. Keep `make docker-up-full`, optional MCP
+> infrastructure, and unrelated Docker stacks stopped. The 7B model shares unified
+> memory with every JVM, container, and application on Apple Silicon.
+
 ### Step 1: Start auth-service (port 8090)
 
 ```bash
@@ -35,10 +40,20 @@ Verify: `curl http://localhost:8090/auth/health` → `{"status":"UP"}`
 ```bash
 cd platform/agent-server
 source .venv/bin/activate        # IMPORTANT: must use project venv, not system Python
-.venv/bin/uvicorn app.main:app --port 8580 --reload
+AGENT_RUNTIME_STORE_BACKEND=sqlite \
+AGENT_LOG_FILE=.runtime/agent-server.log \
+AGENT_STRICT_TOOLS=false \
+AGENT_WORKSPACE=/absolute/path/to/project \
+AGENT_MULTI_TENANT_WORKSPACE=false \
+.venv/bin/uvicorn app.main:app --port 8580
 ```
 
 Verify: `curl http://localhost:8580/health` → `{"status":"ok"}`
+
+The Coding Agent local profile enforces a 1,024-token Ollama output limit and a
+60-second provider deadline. The chat Send button becomes Stop while a run is active.
+See [`../docs/RCA-2026-08-26-LOCAL-AGENT-WATCHDOG-RESET.md`](../docs/RCA-2026-08-26-LOCAL-AGENT-WATCHDOG-RESET.md)
+for the incident analysis and guarded retest criteria.
 
 ### Step 3: Start frontend (port 3000)
 
@@ -58,7 +73,7 @@ Open http://localhost:3000 in your browser.
 5. **Chat**: Type a message in the chat panel → see streaming response
 6. **Approve tools**: For gated operations, review the approval card and choose Approve or Reject before any side effect runs
 7. **Logout**: Click Logout in header → token is blacklisted, redirected to login
-8. **Session restore**: Refresh the page → auto-refreshes token, returns to IDE
+8. **Page reload**: Tokens are memory-only, so a full reload requires login again
 
 ### Quick test (auth only, no agent needed)
 
@@ -128,10 +143,16 @@ Vite proxies API calls to backend services:
 ## Security
 
 - Access token: **in-memory only** (never localStorage — XSS-safe)
-- Refresh token: localStorage (for session restore across page refreshes)
-- Auto-refresh on 401 → silent token rotation
+- Refresh token: **in-memory only**; the Auth Service stores only its hash as the login-session record
+- Auto-refresh on 401 → one single-flight token rotation shared by concurrent requests
 - JWT role parsing for display (e.g., "alice (user)")
-- Logout: POST /auth/logout → blacklists access token in Redis + revokes refresh tokens in DB
+- Logout: POST `/auth/logout` revokes refresh sessions in Auth Service. Agent Server
+  validates access JWT signature/expiry locally, so a previously issued access token
+  remains valid there until expiry unless downstream revocation checking is enabled.
+
+Authentication sessions and Agent sessions are deliberately separate. The refresh
+token represents a browser login session; `session_id` represents conversation and
+checkpoint state and is never accepted as proof of identity.
 
 ## Build
 

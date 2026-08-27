@@ -161,6 +161,21 @@ AGENT_DEFAULT_MODEL=qwen2.5:7b
 # Everything else uses defaults (reflexion off, heuristic rerank)
 ```
 
+**Local Qwen on an OpenAI-compatible MLX endpoint:**
+```env
+# Set agents/coding-agent.yaml model to the matching mlx/<model-id>.
+AGENT_MLX_BASE_URL=http://localhost:8600
+AGENT_MLX_ENABLE_THINKING=false
+AGENT_TOOL_CALL_PROGRESS_MODE=tool_call_text
+AGENT_REFLEXION_ENABLED=false
+AGENT_SUBAGENT_VERIFIER_ENABLED=false
+```
+
+The configured coding agent uses a sequential local runtime profile: subagents
+are removed from its bound tool set and its context budget comes from the YAML
+runtime block. Keep the context budget hardware-specific and validate changes
+with the warm-cache benchmark rather than assuming a larger window is faster.
+
 **Cloud production:**
 ```env
 AGENT_DEFAULT_MODEL=openai/gpt-4o
@@ -178,17 +193,26 @@ AGENT_RERANK_STRATEGY=llm
 | `AGENT_STRONG_MODEL` | `qwen2.5:7b` | Complex reasoning model |
 | `AGENT_CHEAP_MODEL` | `mlx/Qwen2.5-0.5B-Instruct-4bit` | Fast auxiliary model (grading, reranking) |
 | `AGENT_MLX_BASE_URL` | `http://localhost:8600` | MLX server URL (for `mlx/` models) |
+| `AGENT_MLX_ENABLE_THINKING` | _(unset)_ | Optional `enable_thinking` request override for MLX models |
+| `AGENT_TOOL_CALL_PROGRESS_MODE` | `none` | Set `tool_call_text` to expose bounded text attached to tool calls as progress |
 | `AGENT_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
+| `AGENT_MAX_TOKENS` | `4096` | Global output ceiling; Agent YAML may set a lower limit |
+| `AGENT_MAX_RESPONSE_CHARS` | `64000` | Runtime final-response buffer ceiling if a provider ignores its token limit |
+| `AGENT_LLM_TIMEOUT` | `60` | Hard deadline in seconds for one provider model call |
 | `AGENT_MODEL_RETRY_MAX_RETRIES` | `2` | Same-step retries for transient model failures and empty responses |
 | `AGENT_MODEL_RETRY_INITIAL_DELAY_MS` | `500` | Initial exponential retry delay |
 | `AGENT_MODEL_RETRY_MAX_DELAY_MS` | `10000` | Retry delay ceiling, including `Retry-After` |
 | `AGENT_MODEL_RETRY_JITTER_RATIO` | `0.1` | Retry delay jitter ratio (0-1) |
 | `AGENT_RUNTIME_STORE_BACKEND` | `memory` | Set `sqlite` to enable crash-resumable model retry checkpoints |
+| `AGENT_LOG_FILE` | `.runtime/agent-server.log` | Private 10 MiB x 5-backup log with bounded request/response previews; empty disables it |
 | `AGENT_REFLEXION_ENABLED` | `false` | Enable quality gate (adds 1 cheap_model call) |
 | `AGENT_REFLEXION_MIN_GRADE` | `3` | Min grade to pass (1-5 scale) |
 | `AGENT_RERANK_STRATEGY` | `auto` | `auto`, `llm`, `cross_encoder`, `heuristic`, `none` |
 | `AGENT_SUBAGENT_VERIFIER_ENABLED` | `false` | Grade subagent answers before returning |
 | `AGENT_DIRECT_TOOL_ROUTING_ENABLED` | `false` | Skip LLM for obvious single-tool reads |
+| `AGENT_WORKSPACE` | `~/agent-workspace` | Initial workspace root; may be switched through the workspace API |
+| `AGENT_MULTI_TENANT_WORKSPACE` | `true` | Isolate workspace roots per authenticated tenant; set `false` only for single-user local development |
+| `AGENT_STRICT_TOOLS` | `true` | Set `false` only for a minimal stack that intentionally omits remote tool backends |
 | `AGENT_REDIS_URL` | `redis://localhost:6379/0` | Redis (optional, for persistence) |
 | `AGENT_OPENAI_API_KEY` | _(empty)_ | For `openai/` models |
 | `AGENT_ANTHROPIC_API_KEY` | _(empty)_ | For `anthropic/` models |
@@ -196,6 +220,29 @@ AGENT_RERANK_STRATEGY=llm
 | `AGENT_PROMPT_VERSION` | `v2` | System prompt version |
 | `AGENT_CONFIG_DIR` | `agents` | YAML agent config directory |
 | `AGENT_JWT_SECRET` | _(dev default)_ | **Set in production!** |
+| `AGENT_ALLOW_LEGACY_HMAC_AUTH` | `false` | Enable strict HS256 tokens only in isolated local tests; production uses RS256/JWKS |
+
+### Authentication and Sessions
+
+Protected requests carry a short-lived access JWT. Agent Server verifies that JWT
+locally on every request; this is intentional authorization enforcement, not a
+remote login round trip. RS256 keys come from one process-wide JWKS cache with
+stampede protection and a five-minute refresh interval. `/v1/*` middleware stores
+the verified `AuthContext` on the request, and FastAPI route dependencies reuse it
+instead of verifying the token a second time.
+
+RS256 verification requires `kid`, issuer, audience, expiration, issued-at,
+subject, tenant, and token ID claims. Legacy HS256 acceptance is disabled by
+default and must never be enabled outside isolated local compatibility tests.
+
+Three session concepts must remain separate:
+
+- Auth session: rotating refresh-token record owned by Auth Service.
+- Agent conversation session: tenant-prefixed message/checkpoint continuity.
+- Runtime run: one auditable execution with its own `run_id` and event timeline.
+
+Conversation session IDs never authenticate a caller. Workspace, run, approval,
+and cancellation endpoints derive tenant ownership from the verified access JWT.
 
 ### Model Retry Crash Recovery
 
@@ -209,6 +256,8 @@ After a process restart:
   authenticated tenant.
 2. `POST /v1/runs/{run_id}/resume` atomically claims one retry and resumes the
   pending LangGraph `call_llm` node without appending another user message.
+  A due retry with an unexpired owner lease returns `lease held` and
+  `retry_after_ms`; callers must wait rather than risk duplicate execution.
 3. A crash during an in-flight provider request is never replayed automatically;
   it becomes `reconciliation_required` because the provider outcome is unknown.
 
@@ -246,6 +295,11 @@ Tools (15) → Java MCP Backends (optional)
   ├── codeexec-server:8380 (code_run, code_shell)
   └── Local: file_read, file_write, file_edit, file_list, file_search,
              git_status, git_diff, git_commit, run_tests, rag_search
+
+`_build_llm_view` creates the ephemeral, budgeted request sent to the model.
+It keeps the checkpointed raw message sequence lossless, preserves an append-only
+view while under budget, and applies compression only to the temporary model
+view when the configured runtime budget is exceeded.
 
 Features:
   ├── Named SSE events (tool_start, tool_end, status)
