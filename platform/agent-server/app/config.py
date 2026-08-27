@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 
 
 class Settings(BaseSettings):
@@ -13,6 +17,12 @@ class Settings(BaseSettings):
     # Default "*" for local dev; override in production.
     cors_origins: str = "*"
 
+    # Workspace selection. The resolver reads these settings so the local
+    # .env works even when uvicorn is launched from the repository root.
+    workspace: str = ""
+    workspace_root: str = ""
+    multi_tenant_workspace: bool = True
+
     # LLM
     default_model: str = "qwen2.5:7b"
     strong_model: str = "qwen2.5:7b"
@@ -20,6 +30,7 @@ class Settings(BaseSettings):
     llm_timeout: int = 60
     max_agent_steps: int = 20
     max_tokens: int = 4096
+    max_response_chars: int = 64_000
     # Default sampling temperature. Used by `_create_chat_model` when no
     # per-request override is supplied. 0.7 preserves historical behaviour
     # for production chat; eval runs typically override to 0.0 via the
@@ -164,6 +175,15 @@ class Settings(BaseSettings):
 
     # MLX local server (Apple Silicon native, see platform/llm-infra/)
     mlx_base_url: str = "http://localhost:8600"
+    # Model-specific generation control. Leave unset for existing endpoints;
+    # set AGENT_MLX_ENABLE_THINKING=false for local Qwen variants where
+    # non-reasoning mode is the measured latency/quality optimum.
+    mlx_enable_thinking: bool | None = None
+    # Some local Qwen models emit a concise action description alongside tool
+    # calls instead of following a separate structured-progress instruction.
+    # "none" preserves existing behavior; "tool_call_text" exposes that text
+    # as a bounded status event rather than final answer content.
+    tool_call_progress_mode: str = "none"
 
     # OpenAI (optional)
     openai_api_key: str = ""
@@ -193,6 +213,7 @@ class Settings(BaseSettings):
     # Auth — no default in production! Fail fast if not set.
     # Set AGENT_JWT_SECRET env var or use dev default below.
     jwt_secret: str = "default-dev-secret-DO-NOT-USE-IN-PRODUCTION"
+    allow_legacy_hmac_auth: bool = False
 
     # Kafka — event streaming for tool audit + analytics
     # Set to empty string to disable Kafka
@@ -212,7 +233,7 @@ class Settings(BaseSettings):
     jira_project: str = "OPS"   # Jira project key
     jira_issue_type: str = "Bug"
 
-    model_config = {"env_prefix": "AGENT_", "env_file": ".env"}
+    model_config = {"env_prefix": "AGENT_", "env_file": _ENV_FILE}
 
 
 settings = Settings()
