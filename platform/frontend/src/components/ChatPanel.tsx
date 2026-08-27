@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Check, ChevronDown, Code2, Headset, Loader2, MessageSquare, Send, ShieldAlert, ThumbsDown, ThumbsUp, X } from 'lucide-react';
+import { Check, CheckCircle2, ChevronDown, Code2, Headset, Loader2, MessageSquare, Pencil, Search, Send, ShieldAlert, Square, Terminal, ThumbsDown, ThumbsUp, X, XCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -13,9 +13,91 @@ interface Message {
 }
 
 interface ToolChip {
+  invocationKey: string;
   tool: string;
   input: Record<string, unknown>;
   isWrite: boolean;
+  status: 'running' | 'ok' | 'error';
+  output?: string;
+}
+
+function toolInputText(input: Record<string, unknown>, key: string): string {
+  const value = input[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function boundedDetail(value: string, limit = 4000): string {
+  return value.length <= limit ? value : `${value.slice(0, limit)}\n... (truncated)`;
+}
+
+function firstLine(value: string, limit = 180): string {
+  const line = value.split(/\r?\n/, 1)[0];
+  return line.length <= limit ? line : `${line.slice(0, limit)}...`;
+}
+
+function testCommandFromOutput(output?: string): string {
+  return output?.match(/^\$ (.+)$/m)?.[1] || '';
+}
+
+function toolPresentation(chip: ToolChip): { summary: string; detail?: string } {
+  const { tool, input, output } = chip;
+  const path = toolInputText(input, 'path');
+  const query = toolInputText(input, 'query');
+
+  if (tool === 'file_read') {
+    const start = input.start_line;
+    const end = input.end_line;
+    const range = typeof start === 'number' && typeof end === 'number'
+      ? ` (lines ${start}-${end})`
+      : '';
+    return { summary: `${path || '<unspecified>'}${range}` };
+  }
+  if (tool === 'file_list') {
+    const directory = toolInputText(input, 'directory') || '.';
+    const depth = typeof input.depth === 'number' ? ` (depth ${input.depth})` : '';
+    return { summary: `${directory}${depth}` };
+  }
+  if (tool === 'file_search') return { summary: query || '<empty query>' };
+  if (tool === 'run_tests') {
+    const command = testCommandFromOutput(output) || toolInputText(input, 'test_command');
+    return { summary: command ? `$ ${command}` : 'auto-detecting test command' };
+  }
+  if (tool === 'code_shell') {
+    const command = toolInputText(input, 'command');
+    return {
+      summary: `$ ${firstLine(command)}`,
+      detail: command.includes('\n') || command.length > 180 ? boundedDetail(command) : undefined,
+    };
+  }
+  if (tool === 'code_run') {
+    const code = toolInputText(input, 'code');
+    const language = toolInputText(input, 'language') || 'python';
+    const prefix = language === 'shell' ? '$' : `${language}:`;
+    return {
+      summary: `${prefix} ${firstLine(code)}`,
+      detail: code.includes('\n') || code.length > 180 ? boundedDetail(code) : undefined,
+    };
+  }
+  if (tool === 'git_status') return { summary: '$ git status --short' };
+  if (tool === 'git_diff') return { summary: '$ git diff' };
+  if (tool === 'git_commit') {
+    return { summary: `$ git commit -m ${JSON.stringify(toolInputText(input, 'message'))}` };
+  }
+  if (path) {
+    const content = toolInputText(input, 'content');
+    return { summary: path, detail: content ? boundedDetail(content) : undefined };
+  }
+
+  const serialized = JSON.stringify(input);
+  return { summary: serialized === '{}' ? 'no arguments' : firstLine(serialized) };
+}
+
+function toolOutputSummary(output?: string): string {
+  if (!output) return '';
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith('$ ') && line !== '```') || '';
 }
 
 interface ApprovalRequest {
@@ -83,6 +165,9 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const activeRunId = useRef<string | undefined>(undefined);
   const activeTraceIds = useRef<string[]>([]);
+  const streamAbortController = useRef<AbortController | null>(null);
+  const stopRequested = useRef(false);
+  const fileChangeTimeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
   const agent = agents.find((item) => item.id === activeAgent) || agents[0];
   const AgentIcon = agent.icon;
   const messages = conversations[activeAgent].messages;
@@ -91,6 +176,18 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => () => {
+    stopRequested.current = true;
+    const runId = activeRunId.current;
+    if (runId) {
+      void authFetch(`/v1/runs/${runId}/cancel`, { method: 'POST' })
+        .catch(() => { /* aborting the stream remains the fallback */ });
+    }
+    streamAbortController.current?.abort();
+    for (const timeoutId of fileChangeTimeouts.current) clearTimeout(timeoutId);
+    fileChangeTimeouts.current = [];
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -192,9 +289,25 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
   const isWriteTool = (name: string): boolean =>
     ['file_write', 'file_edit', 'git_commit'].includes(name);
 
+  const stopGeneration = () => {
+    if (!sending) return;
+    stopRequested.current = true;
+    setStatus('Stopping...');
+    const runId = activeRunId.current;
+    if (runId) {
+      void authFetch(`/v1/runs/${runId}/cancel`, { method: 'POST' })
+        .catch(() => { /* disconnecting the stream remains the fallback */ });
+    }
+    streamAbortController.current?.abort();
+  };
+
   const sendMessage = async () => {
-    if (!input.trim() || hasBlockingApproval) return;
+    if (!input.trim() || hasBlockingApproval || sending) return;
     const text = input.trim();
+    const abortController = new AbortController();
+    streamAbortController.current = abortController;
+    stopRequested.current = false;
+    activeRunId.current = undefined;
     setInput('');
     setSending(true);
     setApproval(null);
@@ -214,6 +327,7 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
       const resp = await authFetch('/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
         body: JSON.stringify({
           model: activeAgent,
           messages: [{ role: 'user', content: text }],
@@ -228,6 +342,9 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
             : undefined,
         }),
       });
+      const responseRunId = resp.headers.get('X-Run-ID');
+      if (responseRunId) activeRunId.current = responseRunId;
+      const toolRunKey = responseRunId || `${conversations[activeAgent].sessionId}:${Date.now()}`;
 
       const reader = resp.body!.getReader();
       const decoder = new TextDecoder();
@@ -269,10 +386,25 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
             try {
               const ev = JSON.parse(d);
               const isWrite = isWriteTool(ev.tool);
-              updateConversation((conversation) => ({
-                ...conversation,
-                messages: [...conversation.messages, { type: 'tool', chip: { tool: ev.tool, input: ev.input || {}, isWrite } }],
-              }));
+              updateConversation((conversation) => {
+                const messages = [...conversation.messages];
+                const toolMessage = {
+                  type: 'tool',
+                  chip: {
+                    invocationKey: `${toolRunKey}:${ev.seq}`,
+                    tool: ev.tool,
+                    input: ev.input || {},
+                    isWrite,
+                    status: 'running',
+                  },
+                } as const;
+                const assistantIndex = messages.findLastIndex(
+                  (message) => 'role' in message && message.role === 'assistant',
+                );
+                if (assistantIndex >= 0) messages.splice(assistantIndex, 0, toolMessage);
+                else messages.push(toolMessage);
+                return { ...conversation, messages };
+              });
               setStatus('🔧 ' + ev.tool);
             } catch { /* skip */ }
             continue;
@@ -297,8 +429,27 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
             if (eventId) seenToolEventIds.add(eventId);
             try {
               const ev = JSON.parse(d);
+              updateConversation((conversation) => ({
+                ...conversation,
+                messages: conversation.messages.map((message) => (
+                  'type' in message
+                  && message.type === 'tool'
+                  && message.chip.invocationKey === `${toolRunKey}:${ev.seq}`
+                    ? {
+                        ...message,
+                        chip: {
+                          ...message.chip,
+                          input: ev.input || message.chip.input,
+                          output: typeof ev.output === 'string' ? ev.output : '',
+                          status: ev.status === 'error' ? 'error' : 'ok',
+                        },
+                      }
+                    : message
+                )),
+              }));
               if (isWriteTool(ev.tool) && ev.input?.path) {
-                setTimeout(() => onFileChanged?.(ev.input.path), 300);
+                const timeoutId = setTimeout(() => onFileChanged?.(ev.input.path), 300);
+                fileChangeTimeouts.current.push(timeoutId);
               }
             } catch { /* skip */ }
             continue;
@@ -358,8 +509,13 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
         }
       }
     } catch (err) {
-      console.error('[ChatPanel] stream error:', err);
-      const errMsg = `❌ Error: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      const wasStopped = stopRequested.current || (
+        err instanceof DOMException && err.name === 'AbortError'
+      );
+      if (!wasStopped) console.error('[ChatPanel] stream error:', err);
+      const errMsg = wasStopped
+        ? 'Generation stopped.'
+        : `❌ Error: ${err instanceof Error ? err.message : 'Unknown error'}`;
       updateConversation((conversation) => {
         const updated = [...conversation.messages];
         for (let i = updated.length - 1; i >= 0; i--) {
@@ -371,10 +527,16 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
         return { ...conversation, messages: updated };
       });
     }
+    const wasStopped = stopRequested.current;
+    streamAbortController.current = null;
+    activeRunId.current = undefined;
+    stopRequested.current = false;
     setSending(false);
     setApproval((current) => current && ['pending', 'error'].includes(current.status) ? current : null);
     setStatus((prev) => (
-      prev.startsWith('✅ Done') || prev.startsWith('Approval required') || prev === 'Approval failed'
+      wasStopped
+        ? 'Stopped'
+        : prev.startsWith('✅ Done') || prev.startsWith('Approval required') || prev === 'Approval failed'
         ? prev
         : 'Ready'
     ));
@@ -412,19 +574,49 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
       <div className="flex-1 space-y-2 overflow-y-auto p-3">
         {messages.map((msg, i) => {
           if ('type' in msg && msg.type === 'tool') {
-            const { tool, input, isWrite } = msg.chip;
-            const detail = (input?.path || input?.query || input?.message || '') as string;
+            const { tool, input, isWrite, status, output } = msg.chip;
+            const presentation = toolPresentation(msg.chip);
+            const resultSummary = status === 'running' ? '' : toolOutputSummary(output);
+            const isExecution = ['run_tests', 'code_run', 'code_shell'].includes(tool);
             return (
               <div
                 key={i}
-                onClick={() => input?.path && onFileOpen?.(input.path as string)}
-                className={`inline-flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-xs ${
+                className={`w-full rounded border px-2 py-1.5 text-xs ${
                   isWrite
-                    ? 'border border-yellow-900 bg-yellow-950 text-orange-400'
-                    : 'border border-green-900 bg-green-950 text-green-400'
+                    ? 'border-yellow-900 bg-yellow-950/60 text-orange-300'
+                    : 'border-green-900 bg-green-950/50 text-green-300'
                 }`}
               >
-                {isWrite ? '📝' : '🔍'} {tool}{detail ? `: ${detail}` : ''}
+                <div className="flex min-w-0 items-start gap-1.5">
+                  {isExecution
+                    ? <Terminal className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    : isWrite
+                    ? <Pencil className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    : <Search className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                  <code className="shrink-0 font-semibold">{tool}</code>
+                  <button
+                    type="button"
+                    onClick={() => input?.path && onFileOpen?.(input.path as string)}
+                    disabled={!input?.path}
+                    className="min-w-0 flex-1 break-all text-left font-mono text-[11px] text-gray-300 disabled:cursor-default"
+                    title={presentation.summary}
+                  >
+                    {presentation.summary}
+                  </button>
+                  {status === 'running' && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-label="Running" />}
+                  {status === 'ok' && <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-label="Completed" />}
+                  {status === 'error' && <XCircle className="h-3.5 w-3.5 shrink-0 text-red-400" aria-label="Failed" />}
+                </div>
+                {presentation.detail && (
+                  <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap border-t border-white/10 pt-1 font-mono text-[11px] text-gray-400">
+                    {presentation.detail}
+                  </pre>
+                )}
+                {resultSummary && (
+                  <div className={`mt-1 truncate border-t border-white/10 pt-1 text-[11px] ${status === 'error' ? 'text-red-400' : 'text-gray-500'}`} title={resultSummary}>
+                    {resultSummary}
+                  </div>
+                )}
               </div>
             );
           }
@@ -555,15 +747,19 @@ export function ChatPanel({ onFileChanged, onFileOpen, activeFile }: ChatPanelPr
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-          disabled={hasBlockingApproval}
+          disabled={hasBlockingApproval || sending}
           className="flex-1 rounded border border-ide-border bg-ide-bg px-3 py-1.5 text-sm text-gray-200 outline-none focus:border-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
         />
         <button
-          onClick={sendMessage}
-          disabled={hasBlockingApproval || !input.trim()}
-          className="rounded bg-brand-600 px-3 py-1.5 text-white hover:bg-brand-500 disabled:cursor-not-allowed disabled:bg-ide-panel disabled:text-gray-600"
+          type="button"
+          onClick={sending ? stopGeneration : sendMessage}
+          disabled={!sending && (hasBlockingApproval || !input.trim())}
+          className={`rounded px-3 py-1.5 text-white disabled:cursor-not-allowed disabled:bg-ide-panel disabled:text-gray-600 ${
+            sending ? 'bg-red-700 hover:bg-red-600' : 'bg-brand-600 hover:bg-brand-500'
+          }`}
+          title={sending ? 'Stop generation' : 'Send message'}
         >
-          <Send className="h-4 w-4" />
+          {sending ? <Square className="h-4 w-4" fill="currentColor" /> : <Send className="h-4 w-4" />}
         </button>
       </div>
     </div>
