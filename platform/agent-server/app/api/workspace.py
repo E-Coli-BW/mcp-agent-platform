@@ -2,13 +2,19 @@
 
 import os
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Query
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from app.tools.agent_mode import get_workspace_root, set_workspace_root
-from app.tools.workspace_resolver import WorkspacePathError, validate_path
+from app.auth.middleware import AuthContext, require_auth
+from app.tools.workspace_resolver import (
+    WorkspacePathError,
+    get_resolver,
+    validate_path,
+)
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
+AUTH_DEPENDENCY = Depends(require_auth)
 
 # Files/dirs to skip in tree listing
 IGNORE = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', '.idea', '.DS_Store',
@@ -33,9 +39,17 @@ def _allowed_workspace_roots() -> list[Path]:
     ]
 
 
-def _is_allowed_workspace_path(path: str) -> bool:
+def _is_allowed_workspace_path(path: str, auth: AuthContext) -> bool:
     candidate = Path(path).resolve()
+    resolver = get_resolver()
+    if resolver.is_multi_tenant():
+        root = Path(resolver.allowed_root_for_tenant(auth.tenant_id)).resolve()
+        return candidate.is_relative_to(root)
     return any(candidate.is_relative_to(root) for root in _allowed_workspace_roots())
+
+
+def _workspace_for(auth: AuthContext) -> str:
+    return get_resolver().for_tenant(auth.tenant_id)
 
 
 def _build_tree(root: str, rel: str = "", depth: int = 0, max_depth: int = 5) -> list[dict]:
@@ -58,6 +72,8 @@ def _build_tree(root: str, rel: str = "", depth: int = 0, max_depth: int = 5) ->
             continue
         child_rel = os.path.join(rel, name) if rel else name
         child_full = os.path.join(full, name)
+        if os.path.islink(child_full):
+            continue
         if os.path.isdir(child_full):
             entries.append({
                 "name": name,
@@ -81,10 +97,16 @@ def _build_tree(root: str, rel: str = "", depth: int = 0, max_depth: int = 5) ->
 
 
 @router.get("/current")
-async def get_current_workspace():
+async def get_current_workspace(auth: AuthContext = AUTH_DEPENDENCY):
     """Return the current workspace root path."""
-    root = get_workspace_root()
-    return {"path": root, "exists": os.path.isdir(root)}
+    resolver = get_resolver()
+    root = resolver.for_tenant(auth.tenant_id)
+    allowed_root = resolver.allowed_root_for_tenant(auth.tenant_id)
+    return {
+        "path": root,
+        "allowed_root": allowed_root,
+        "exists": os.path.isdir(root),
+    }
 
 
 class OpenWorkspaceRequest(BaseModel):
@@ -92,7 +114,10 @@ class OpenWorkspaceRequest(BaseModel):
 
 
 @router.post("/open")
-async def open_workspace(req: OpenWorkspaceRequest):
+async def open_workspace(
+    req: OpenWorkspaceRequest,
+    auth: AuthContext = AUTH_DEPENDENCY,
+):
     """Switch the workspace root at runtime.
 
     Security: resolves symlinks and blocks paths outside user's home directory.
@@ -101,26 +126,37 @@ async def open_workspace(req: OpenWorkspaceRequest):
     path = os.path.expanduser(req.path)
     resolved = os.path.realpath(path)
 
-    # Security: block paths outside user's home directory
-    if not _is_allowed_workspace_path(resolved):
-        raise HTTPException(403, f"Path '{req.path}' is outside allowed directories. Must be under home or /tmp.")
+    if not _is_allowed_workspace_path(resolved, auth):
+        raise HTTPException(403, f"Path '{req.path}' is outside the tenant workspace boundary.")
 
     if not os.path.isdir(resolved):
         raise HTTPException(400, f"Workspace directory does not exist: {req.path}")
 
-    set_workspace_root(resolved)
-    return {"path": get_workspace_root(), "message": f"Workspace set to {get_workspace_root()}"}
+    resolver = get_resolver()
+    if resolver.is_multi_tenant():
+        resolver.set_for_tenant(auth.tenant_id, resolved)
+    else:
+        resolver.set_base(resolved)
+    root = resolver.for_tenant(auth.tenant_id)
+    return {"path": root, "message": f"Workspace set to {root}"}
 
 
 @router.get("/browse")
-async def browse_directory(path: str = Query("~", description="Directory to list")):
+async def browse_directory(
+    path: str = Query("~", description="Directory to list"),
+    auth: AuthContext = AUTH_DEPENDENCY,
+):
     """List subdirectories of a given path — for the frontend directory picker.
     Returns only directories (not files), with security checks.
     """
-    expanded = os.path.expanduser(path)
+    resolver = get_resolver()
+    if resolver.is_multi_tenant() and path in {"", "~"}:
+        expanded = resolver.allowed_root_for_tenant(auth.tenant_id)
+    else:
+        expanded = os.path.expanduser(path)
     resolved = os.path.realpath(expanded)
 
-    if not _is_allowed_workspace_path(resolved):
+    if not _is_allowed_workspace_path(resolved, auth):
         raise HTTPException(403, "Path outside allowed directories")
 
     if not os.path.isdir(resolved):
@@ -138,25 +174,28 @@ async def browse_directory(path: str = Query("~", description="Directory to list
         pass
 
     parent = os.path.dirname(resolved)
-    if parent == resolved or not _is_allowed_workspace_path(parent):
+    if parent == resolved or not _is_allowed_workspace_path(parent, auth):
         parent = None
 
     return {"path": resolved, "parent": parent, "dirs": dirs}
 
 
 @router.get("/files")
-async def list_files():
+async def list_files(auth: AuthContext = AUTH_DEPENDENCY):
     """Return the workspace file tree as JSON."""
-    root = get_workspace_root()
+    root = _workspace_for(auth)
     if not os.path.isdir(root):
         return {"root": root, "tree": []}
     return {"root": root, "tree": _build_tree(root)}
 
 
 @router.get("/file")
-async def read_file(path: str = Query(..., description="Relative path within workspace")):
+async def read_file(
+    path: str = Query(..., description="Relative path within workspace"),
+    auth: AuthContext = AUTH_DEPENDENCY,
+):
     """Read a file's content."""
-    root = get_workspace_root()
+    root = _workspace_for(auth)
     try:
         resolved = validate_path(path, root)  # C2 fix: is_relative_to + symlink rejection
     except WorkspacePathError as exc:

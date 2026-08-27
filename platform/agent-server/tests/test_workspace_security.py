@@ -24,10 +24,12 @@ from app.auth.middleware import tenant_context
 from app.tools.workspace_resolver import (
     WorkspacePathError,
     WorkspaceResolver,
+    _configured_multi_tenant_workspace,
+    _configured_workspace_base,
     _sanitize_tenant_id,
+    _tenant_directory_key,
     validate_path,
 )
-
 
 # ── C2: validate_path ─────────────────────────────────────────────
 
@@ -95,6 +97,59 @@ class TestValidatePath:
 
 
 class TestWorkspaceResolverIsolation:
+    @pytest.mark.parametrize("configured", [True, False])
+    def test_workspace_mode_uses_settings_without_process_override(
+        self,
+        configured,
+        monkeypatch,
+    ):
+        monkeypatch.delenv("AGENT_MULTI_TENANT_WORKSPACE", raising=False)
+        monkeypatch.setattr(
+            "app.tools.workspace_resolver.settings.multi_tenant_workspace",
+            configured,
+        )
+
+        assert _configured_multi_tenant_workspace() is configured
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [("true", True), ("1", True), ("false", False), ("0", False)],
+    )
+    def test_explicit_workspace_mode_overrides_environment(
+        self,
+        configured,
+        expected,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(
+            "app.tools.workspace_resolver.settings.multi_tenant_workspace",
+            not expected,
+        )
+        monkeypatch.setenv("AGENT_MULTI_TENANT_WORKSPACE", configured)
+
+        assert _configured_multi_tenant_workspace() is expected
+
+    def test_workspace_root_alias_is_supported(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AGENT_WORKSPACE", raising=False)
+        monkeypatch.setenv("AGENT_WORKSPACE_ROOT", str(tmp_path))
+
+        assert _configured_workspace_base() == str(tmp_path)
+
+    def test_workspace_setting_is_used_without_process_override(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AGENT_WORKSPACE", raising=False)
+        monkeypatch.delenv("AGENT_WORKSPACE_ROOT", raising=False)
+        monkeypatch.setattr("app.tools.workspace_resolver.settings.workspace", str(tmp_path))
+
+        assert _configured_workspace_base() == str(tmp_path)
+
+    def test_agent_workspace_takes_precedence(self, tmp_path, monkeypatch):
+        canonical = tmp_path / "canonical"
+        alias = tmp_path / "alias"
+        monkeypatch.setenv("AGENT_WORKSPACE", str(canonical))
+        monkeypatch.setenv("AGENT_WORKSPACE_ROOT", str(alias))
+
+        assert _configured_workspace_base() == str(canonical)
+
     def test_each_tenant_gets_distinct_directory(self, tmp_path):
         resolver = WorkspaceResolver(base=str(tmp_path), multi_tenant=True)
         ws_a = resolver.for_tenant("tenant-a")
@@ -102,6 +157,17 @@ class TestWorkspaceResolverIsolation:
         assert ws_a != ws_b
         assert Path(ws_a).resolve().is_relative_to(tmp_path.resolve())
         assert Path(ws_b).resolve().is_relative_to(tmp_path.resolve())
+
+    def test_allowed_root_ignores_per_tenant_override(self, tmp_path):
+        resolver = WorkspaceResolver(base=str(tmp_path), multi_tenant=True)
+        allowed = resolver.allowed_root_for_tenant("tenant-a")
+        override = Path(allowed) / "project"
+        override.mkdir()
+
+        resolver.set_for_tenant("tenant-a", str(override))
+
+        assert resolver.for_tenant("tenant-a") == str(override.resolve())
+        assert resolver.allowed_root_for_tenant("tenant-a") == allowed
 
     def test_set_for_tenant_does_not_leak_to_other_tenants(self, tmp_path):
         resolver = WorkspaceResolver(base=str(tmp_path), multi_tenant=True)
@@ -129,6 +195,10 @@ class TestWorkspaceResolverIsolation:
         assert _sanitize_tenant_id("") == "default"
         assert _sanitize_tenant_id(None) == "default"
         assert _sanitize_tenant_id("..") == "default"
+
+    def test_sanitized_tenant_collisions_have_distinct_directory_keys(self):
+        assert _sanitize_tenant_id("a/b") == _sanitize_tenant_id("a_b")
+        assert _tenant_directory_key("a/b") != _tenant_directory_key("a_b")
 
     def test_resolver_creates_workspace_lazily(self, tmp_path):
         resolver = WorkspaceResolver(base=str(tmp_path), multi_tenant=True)

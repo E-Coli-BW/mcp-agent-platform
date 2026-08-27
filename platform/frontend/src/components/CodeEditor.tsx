@@ -1,5 +1,5 @@
 import { authFetch } from "@/lib/auth";
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { X } from 'lucide-react';
 
@@ -107,6 +107,7 @@ export function CodeEditor({ tabs, activeTab, onTabSelect, onTabClose }: CodeEdi
 export function useEditorTabs() {
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
+  const workspaceGeneration = useRef(0);
 
   const openFile = useCallback(async (path: string) => {
     // Already open?
@@ -115,10 +116,12 @@ export function useEditorTabs() {
       return;
     }
 
+    const generation = workspaceGeneration.current;
     try {
       const resp = await authFetch(`/api/workspace/file?path=${encodeURIComponent(path)}`);
       if (!resp.ok) return;
       const data = await resp.json();
+      if (generation !== workspaceGeneration.current) return;
       const tab: EditorTab = {
         path,
         content: data.content,
@@ -142,10 +145,12 @@ export function useEditorTabs() {
   }, [activeTab]);
 
   const reloadFile = useCallback(async (path: string) => {
+    const generation = workspaceGeneration.current;
     try {
       const resp = await authFetch(`/api/workspace/file?path=${encodeURIComponent(path)}`);
       if (!resp.ok) return;
       const data = await resp.json();
+      if (generation !== workspaceGeneration.current) return;
       setTabs((prev) =>
         prev.map((t) =>
           t.path === path ? { ...t, content: data.content, modified: true } : t
@@ -165,5 +170,11 @@ export function useEditorTabs() {
     }
   }, [tabs, openFile]);
 
-  return { tabs, activeTab, openFile, closeTab, reloadFile, setActiveTab };
+  const resetTabs = useCallback(() => {
+    workspaceGeneration.current += 1;
+    setTabs([]);
+    setActiveTab(null);
+  }, []);
+
+  return { tabs, activeTab, openFile, closeTab, reloadFile, resetTabs, setActiveTab };
 }

@@ -21,19 +21,37 @@ resolver using the current ContextVar value.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import threading
 from pathlib import Path
-from typing import Dict, Optional
 
+from app.config import settings
 
 # Base root — all tenant workspaces live as direct children of this directory.
 # In single-tenant / legacy mode we treat the base itself as the workspace.
 _DEFAULT_BASE = os.path.expanduser("~/agent-workspace")
 
 
-def _sanitize_tenant_id(tenant_id: Optional[str]) -> str:
+def _configured_workspace_base() -> str:
+    return (
+        os.environ.get("AGENT_WORKSPACE")
+        or os.environ.get("AGENT_WORKSPACE_ROOT")
+        or settings.workspace
+        or settings.workspace_root
+        or _DEFAULT_BASE
+    )
+
+
+def _configured_multi_tenant_workspace() -> bool:
+    configured = os.environ.get("AGENT_MULTI_TENANT_WORKSPACE")
+    if configured is not None:
+        return configured.strip().lower() not in {"0", "false", "no", "off"}
+    return settings.multi_tenant_workspace
+
+
+def _sanitize_tenant_id(tenant_id: str | None) -> str:
     """Map a tenant id to a filesystem-safe directory name.
 
     Anything outside ``[A-Za-z0-9._-]`` becomes ``_``. Empty / None tenants
@@ -46,6 +64,13 @@ def _sanitize_tenant_id(tenant_id: Optional[str]) -> str:
     return cleaned or "default"
 
 
+def _tenant_directory_key(tenant_id: str | None) -> str:
+    raw = tenant_id or "default"
+    readable = _sanitize_tenant_id(tenant_id)
+    digest = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    return f"{readable}--{digest}"
+
+
 class WorkspaceResolver:
     """Maps a tenant id → isolated workspace directory.
 
@@ -54,12 +79,12 @@ class WorkspaceResolver:
     only takes the lock long enough to read two values.
     """
 
-    def __init__(self, base: Optional[str] = None, *, multi_tenant: bool = True) -> None:
+    def __init__(self, base: str | None = None, *, multi_tenant: bool = True) -> None:
         self._lock = threading.Lock()
         self._base = os.path.realpath(os.path.expanduser(base or _DEFAULT_BASE))
         # Per-tenant explicit overrides — populated by REST `/api/workspace/open`.
         # When unset, a tenant's workspace is `<base>/<sanitized_tenant_id>`.
-        self._overrides: Dict[str, str] = {}
+        self._overrides: dict[str, str] = {}
         # In single-tenant / dev mode, every tenant shares ``self._base`` directly
         # so existing tests and the legacy ``set_workspace_root`` API keep working.
         self._multi_tenant = multi_tenant
@@ -70,19 +95,25 @@ class WorkspaceResolver:
         with self._lock:
             return self._base
 
-    def for_tenant(self, tenant_id: Optional[str]) -> str:
-        """Return the workspace directory for ``tenant_id``, creating it lazily."""
-        key = _sanitize_tenant_id(tenant_id)
+    def allowed_root_for_tenant(self, tenant_id: str | None) -> str:
+        """Return the immutable selection boundary for one tenant."""
+        key = _tenant_directory_key(tenant_id)
         with self._lock:
-            override = self._overrides.get(key)
             base = self._base
             multi = self._multi_tenant
+        path = os.path.join(base, key) if multi else base
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return path
+
+    def for_tenant(self, tenant_id: str | None) -> str:
+        """Return the workspace directory for ``tenant_id``, creating it lazily."""
+        key = _tenant_directory_key(tenant_id)
+        with self._lock:
+            override = self._overrides.get(key)
         if override:
             path = override
-        elif multi:
-            path = os.path.join(base, key)
         else:
-            path = base
+            path = self.allowed_root_for_tenant(tenant_id)
         Path(path).mkdir(parents=True, exist_ok=True)
         return path
 
@@ -94,9 +125,9 @@ class WorkspaceResolver:
         with self._lock:
             self._base = resolved
 
-    def set_for_tenant(self, tenant_id: Optional[str], path: str) -> str:
+    def set_for_tenant(self, tenant_id: str | None, path: str) -> str:
         """Pin a specific path for one tenant. Used by REST workspace-open."""
-        key = _sanitize_tenant_id(tenant_id)
+        key = _tenant_directory_key(tenant_id)
         resolved = os.path.realpath(os.path.expanduser(path))
         Path(resolved).mkdir(parents=True, exist_ok=True)
         with self._lock:
@@ -112,13 +143,12 @@ class WorkspaceResolver:
             return self._multi_tenant
 
 
-# Module-level singleton. The default is single-tenant so existing tests that
-# call ``set_workspace_root(tmp_path)`` keep observing one shared directory.
-# Multi-tenant mode is enabled by setting AGENT_MULTI_TENANT_WORKSPACE=1, by
-# which point the JWT auth middleware is the source of truth for the tenant id.
+# Module-level singleton. Multi-tenant isolation is the safe code default.
+# Single-user local setups can opt out through the process environment or the
+# agent-server .env file, regardless of uvicorn's working directory.
 _resolver = WorkspaceResolver(
-    base=os.environ.get("AGENT_WORKSPACE", _DEFAULT_BASE),
-    multi_tenant=os.environ.get("AGENT_MULTI_TENANT_WORKSPACE", "").lower() in {"1", "true", "yes"},
+    base=_configured_workspace_base(),
+    multi_tenant=_configured_multi_tenant_workspace(),
 )
 
 

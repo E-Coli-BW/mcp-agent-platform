@@ -1,3 +1,4 @@
+import { useCallback, useState } from 'react';
 import { FileTree } from '@/components/FileTree';
 import { CodeEditor, useEditorTabs } from '@/components/CodeEditor';
 import { ChatPanel } from '@/components/ChatPanel';
@@ -7,12 +8,19 @@ import { ChatPanel } from '@/components/ChatPanel';
  * Composes FileTree + CodeEditor + ChatPanel into a VS Code-like layout.
  */
 export function IdePage() {
-  const { tabs, activeTab, openFile, closeTab, reloadFile, setActiveTab } = useEditorTabs();
+  const { tabs, activeTab, openFile, closeTab, reloadFile, resetTabs, setActiveTab } = useEditorTabs();
+  const [workspacePath, setWorkspacePath] = useState('');
+  const handleWorkspaceOpen = useCallback((path: string) => {
+    setWorkspacePath((current) => {
+      if (current !== path) resetTabs();
+      return path;
+    });
+  }, [resetTabs]);
 
   return (
     <div className="flex h-full">
       {/* Sidebar: File Tree */}
-      <FileTree onFileSelect={openFile} />
+      <FileTree onFileSelect={openFile} onWorkspaceOpen={handleWorkspaceOpen} />
 
       {/* Main area: Editor + Chat */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -29,6 +37,7 @@ export function IdePage() {
 
         {/* Chat Panel */}
         <ChatPanel
+          key={workspacePath || 'workspace-unset'}
           onFileChanged={reloadFile}
           onFileOpen={openFile}
           activeFile={activeTab ? { path: activeTab } : undefined}

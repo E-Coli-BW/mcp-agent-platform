@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUp, Check, Folder, FolderOpen, FolderSearch, Loader2, RefreshCw, X } from 'lucide-react';
 import { authFetch } from '@/lib/auth';
 
@@ -11,6 +11,7 @@ interface FileNode {
 
 interface FileTreeProps {
   onFileSelect: (path: string) => void;
+  onWorkspaceOpen: (path: string) => void;
 }
 
 interface BrowseDirectory {
@@ -71,7 +72,7 @@ function TreeNode({ node, depth, onFileSelect }: {
   );
 }
 
-export function FileTree({ onFileSelect }: FileTreeProps) {
+export function FileTree({ onFileSelect, onWorkspaceOpen }: FileTreeProps) {
   const [workspacePath, setWorkspacePath] = useState('');
   const [tree, setTree] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(false);
@@ -82,6 +83,7 @@ export function FileTree({ onFileSelect }: FileTreeProps) {
   const [browserDirs, setBrowserDirs] = useState<BrowseDirectory[]>([]);
   const [browserLoading, setBrowserLoading] = useState(false);
   const [browserError, setBrowserError] = useState('');
+  const workspaceRequestVersion = useRef(0);
 
   async function responseError(response: Response): Promise<string> {
     const body = await response.json().catch(() => null);
@@ -89,11 +91,12 @@ export function FileTree({ onFileSelect }: FileTreeProps) {
     return `Request failed with HTTP ${response.status}`;
   }
 
-  async function doRefreshTree() {
+  const doRefreshTree = useCallback(async (expectedRoot?: string) => {
     setLoading(true);
     try {
       const resp = await authFetch('/api/workspace/files');
       const data = await resp.json();
+      if (expectedRoot && data.root !== expectedRoot) return;
       console.log('[FileTree] got tree:', data.tree?.length, 'nodes');
       setTree(data.tree || []);
     } catch (e) {
@@ -101,7 +104,27 @@ export function FileTree({ onFileSelect }: FileTreeProps) {
       setTree([]);
     }
     setLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestVersion = ++workspaceRequestVersion.current;
+    void authFetch('/api/workspace/current')
+      .then((response) => response.ok ? response.json() : null)
+      .then((data: { path?: string; exists?: boolean } | null) => {
+        if (
+          cancelled
+          || requestVersion !== workspaceRequestVersion.current
+          || !data?.exists
+          || !data.path
+        ) return;
+        setWorkspacePath(data.path);
+        onWorkspaceOpen(data.path);
+        void doRefreshTree(data.path);
+      })
+      .catch(() => { /* workspace can still be opened manually */ });
+    return () => { cancelled = true; };
+  }, [doRefreshTree, onWorkspaceOpen]);
 
   async function doOpenWorkspace(path?: string) {
     const p = path || workspacePath;
@@ -110,6 +133,7 @@ export function FileTree({ onFileSelect }: FileTreeProps) {
       alert('Please type a workspace path first');
       return;
     }
+    const requestVersion = ++workspaceRequestVersion.current;
     setLoading(true);
     setWorkspaceError('');
     try {
@@ -118,12 +142,14 @@ export function FileTree({ onFileSelect }: FileTreeProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: p }),
       });
+      if (requestVersion !== workspaceRequestVersion.current) return;
       console.log('[FileTree] open status:', resp.status);
       if (resp.ok) {
         const data = await resp.json();
         console.log('[FileTree] opened:', data.path);
         setWorkspacePath(data.path);
-        await doRefreshTree();
+        onWorkspaceOpen(data.path);
+        await doRefreshTree(data.path);
       } else {
         const error = await responseError(resp);
         setWorkspaceError(error);
@@ -162,11 +188,10 @@ export function FileTree({ onFileSelect }: FileTreeProps) {
     void loadBrowseDirectory(workspacePath.trim() || '~');
   }
 
-  function selectBrowseDirectory() {
+  async function selectBrowseDirectory() {
     if (!browserPath) return;
-    setWorkspacePath(browserPath);
-    setWorkspaceError('');
     setBrowserOpen(false);
+    await doOpenWorkspace(browserPath);
   }
 
   return (
@@ -176,7 +201,7 @@ export function FileTree({ onFileSelect }: FileTreeProps) {
           <FolderOpen className="h-3.5 w-3.5 text-gray-400" />
           <span className="text-xs uppercase tracking-wide text-gray-500">Explorer</span>
         </div>
-        <button onClick={doRefreshTree} className="text-gray-500 hover:text-gray-300" title="Refresh">
+        <button onClick={() => void doRefreshTree()} className="text-gray-500 hover:text-gray-300" title="Refresh">
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
@@ -309,7 +334,7 @@ export function FileTree({ onFileSelect }: FileTreeProps) {
               </button>
               <button
                 type="button"
-                onClick={selectBrowseDirectory}
+                onClick={() => void selectBrowseDirectory()}
                 disabled={!browserPath || browserLoading}
                 className="inline-flex h-8 items-center gap-1 rounded bg-brand-600 px-3 text-xs font-medium text-white hover:bg-brand-500 disabled:cursor-not-allowed disabled:bg-ide-panel disabled:text-gray-600"
               >

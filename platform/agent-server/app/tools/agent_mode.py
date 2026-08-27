@@ -14,10 +14,11 @@ Security model (review findings C1 + C2):
       files relative to its tenant workspace.
 """
 
-import os
 import asyncio
+import os
 from dataclasses import replace
 from pathlib import Path
+
 from langchain_core.tools import tool
 
 from app.context.request_context import get_request_context
@@ -53,6 +54,9 @@ def get_workspace_root() -> str:
     default) returns the same directory for every caller so existing tests
     that call ``set_workspace_root(tmp_path)`` keep working.
     """
+    request_workspace = get_request_context().workspace_root
+    if request_workspace:
+        return request_workspace
     return get_resolver().for_tenant(_current_tenant_id())
 
 
@@ -425,8 +429,7 @@ def _git_commit_impl(message: str) -> str:
 
 @tool
 def run_tests(test_command: str | None = None) -> str:
-    """Run tests in the workspace. Auto-detects project type (pytest/mvn/npm) if no command given.
-    Use this after file_write or file_edit to verify changes don't break anything."""
+    """Run a bounded test command in the current workspace and report the exact command. Auto-detects pytest, Maven, npm, or Go when no command is given. Use this for project tests, not to start a long-running application."""
     return _run_idempotent_mutation(
         "run_tests",
         {"test_command": test_command or ""},
@@ -435,6 +438,7 @@ def run_tests(test_command: str | None = None) -> str:
 
 
 def _run_tests_impl(test_command: str | None = None) -> str:
+    cmd = test_command or ""
     try:
         import subprocess
         root = _ensure_workspace()
@@ -464,10 +468,13 @@ def _run_tests_impl(test_command: str | None = None) -> str:
         stderr = result.stderr[-500:] if len(result.stderr) > 500 else result.stderr
 
         if result.returncode == 0:
-            return f"✅ Tests passed!\n```\n{output.strip()}\n```"
+            return f"$ {cmd}\n\n✅ Tests passed!\n```\n{output.strip()}\n```"
         else:
-            return f"❌ Tests failed (exit code {result.returncode}):\n```\n{output.strip()}\n{stderr.strip()}\n```"
+            return (
+                f"$ {cmd}\n\n❌ Tests failed (exit code {result.returncode}):"
+                f"\n```\n{output.strip()}\n{stderr.strip()}\n```"
+            )
     except subprocess.TimeoutExpired:
-        return "⏰ Tests timed out (60s limit)"
+        return f"$ {cmd}\n\n⏰ Tests timed out (60s limit)"
     except Exception as e:
         return f"❌ Test run failed: {e}"

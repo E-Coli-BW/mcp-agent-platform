@@ -1,14 +1,14 @@
 """Tests for reranker and run_tests tool."""
 
-import os
 import subprocess
+
 import pytest
 
-from app.tools.agent_mode import set_workspace_root, run_tests
 from app.context.request_context import set_request_context
-from app.runtime import reset_idempotency_store_for_tests
-from app.rag.reranking.dispatcher import rerank, heuristic_rerank
 from app.rag.index.retriever import ScoredChunk
+from app.rag.reranking.dispatcher import heuristic_rerank, rerank
+from app.runtime import reset_idempotency_store_for_tests
+from app.tools.agent_mode import run_tests, set_workspace_root
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +37,24 @@ class TestRunTests:
         result = run_tests.invoke({"test_command": "echo 'tests passed'"})
         assert "✅" in result
         assert "tests passed" in result
+        assert result.startswith("$ echo 'tests passed'")
+
+    def test_reports_auto_detected_go_command(self, workspace, monkeypatch):
+        (workspace / "go.mod").write_text("module example.com/demo\n")
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args=args[0],
+                returncode=0,
+                stdout="ok\n",
+                stderr="",
+            ),
+        )
+
+        result = run_tests.invoke({})
+
+        assert result.startswith("$ go test ./...")
 
     def test_custom_command_replays_without_second_execution(self, workspace):
         set_request_context("req-1", "run-1", "tenant:s1")

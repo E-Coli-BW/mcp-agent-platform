@@ -53,10 +53,6 @@ _SKIP_DIRS = {
     "egg-info",
 }
 
-# Module-level cache
-_cache: tuple[str, str] | None = None
-
-
 def detect_project_type(root: str) -> str | None:
     """Detect project type from marker files in the root directory."""
     for marker, ptype in PROJECT_MARKERS.items():
@@ -105,13 +101,14 @@ def get_workspace_context(root: str) -> str:
     """Generate a workspace context string for the system prompt.
 
     Returns a multi-line string with project type, modules, and summary.
-    Uses module-level caching — invalidates when root changes.
+    Recomputes on each turn so edits and workspace switches cannot reuse stale
+    project metadata from a previous checkpoint.
     """
-    global _cache
-    if _cache and _cache[0] == root:
-        return _cache[1]
-
-    parts = [f"Workspace: {os.path.basename(root)}"]
+    parts = [
+        "Workspace root for all file tools: .",
+        f"Workspace name (display only): {os.path.basename(root)}",
+        "Never prepend the workspace name to a file path.",
+    ]
 
     ptype = detect_project_type(root)
     if ptype:
@@ -127,6 +124,4 @@ def get_workspace_context(root: str) -> str:
     if summary:
         parts.append(summary)
 
-    ctx = "\n".join(parts)
-    _cache = (root, ctx)
-    return ctx
+    return "\n".join(parts)
