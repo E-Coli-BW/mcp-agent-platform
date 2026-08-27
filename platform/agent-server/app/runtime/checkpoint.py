@@ -155,16 +155,25 @@ class SQLiteCheckpointStore:
         state: str,
         payload: dict | None = None,
         clear_lease: bool = False,
+        owner: str | None = None,
     ) -> RunCheckpoint | None:
         with sqlite3.connect(self.database_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT state, payload_json FROM agent_run_checkpoints WHERE run_id = ?",
+                """SELECT state, payload_json, lease_owner, lease_expires_at
+                FROM agent_run_checkpoints WHERE run_id = ?""",
                 (run_id,),
             ).fetchone()
             if row is None:
                 return None
-            current_state, payload_json = row
+            current_state, payload_json, lease_owner, lease_expires_at = row
+            now = time.time()
+            if owner is not None and (
+                lease_owner != owner
+                or lease_expires_at is None
+                or lease_expires_at < now
+            ):
+                return None
             if state != current_state and state not in _ALLOWED_TRANSITIONS.get(
                 current_state, set()
             ):
@@ -173,15 +182,24 @@ class SQLiteCheckpointStore:
                 )
             merged = json.loads(payload_json)
             merged.update(payload or {})
-            now = time.time()
             lease_update = ", lease_owner = NULL, lease_expires_at = NULL" if clear_lease else ""
+            owner_clause = (
+                " AND lease_owner = ? AND lease_expires_at >= ?"
+                if owner is not None
+                else ""
+            )
+            params = [state, json.dumps(merged), now, run_id, current_state]
+            if owner is not None:
+                params.extend((owner, now))
             result = conn.execute(
                 f"""UPDATE agent_run_checkpoints
                 SET state = ?, payload_json = ?, updated_at = ?{lease_update}
-                WHERE run_id = ? AND state = ?""",
-                (state, json.dumps(merged), now, run_id, current_state),
+                WHERE run_id = ? AND state = ?{owner_clause}""",
+                params,
             )
             if result.rowcount != 1:
+                if owner is not None:
+                    return None
                 raise InvalidCheckpointTransition(
                     f"checkpoint changed concurrently while transitioning {run_id}"
                 )

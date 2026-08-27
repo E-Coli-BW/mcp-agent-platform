@@ -55,7 +55,15 @@ async def chat_completions(
     tenant_context.set(auth.tenant_id)
     request_id = f"req-{uuid.uuid4().hex[:12]}"
     run_id = f"run-{uuid.uuid4().hex[:12]}"
-    set_request_context(request_id=request_id, run_id=run_id, session_id=session_id)
+    from app.tools.agent_mode import get_workspace_root
+
+    workspace_root = get_workspace_root()
+    set_request_context(
+        request_id=request_id,
+        run_id=run_id,
+        session_id=session_id,
+        workspace_root=workspace_root,
+    )
     set_prompt_version(request.prompt_version or "")
 
     from app.agent.delegation.governance import init_root_context
@@ -97,9 +105,15 @@ async def chat_completions(
                     yield _make_chunk("", request.model, finish_reason="stop")
                     yield "[DONE]"
 
-                return EventSourceResponse(meta_stream(), media_type="text/event-stream")
+                return EventSourceResponse(
+                    meta_stream(),
+                    media_type="text/event-stream",
+                    headers={"X-Run-ID": run_id, "X-Request-ID": request_id},
+                )
             return {
                 "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
+                "run_id": run_id,
+                "request_id": request_id,
                 "object": "chat.completion",
                 "created": int(time.time()),
                 "model": request.model,
@@ -128,7 +142,11 @@ async def chat_completions(
         http_request=raw_request,
     )
     if request.stream:
-        return EventSourceResponse(stream, media_type="text/event-stream")
+        return EventSourceResponse(
+            stream,
+            media_type="text/event-stream",
+            headers={"X-Run-ID": run_id, "X-Request-ID": request_id},
+        )
 
     full_response = ""
     async for chunk in stream:
@@ -147,6 +165,8 @@ async def chat_completions(
 
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
+        "run_id": run_id,
+        "request_id": request_id,
         "object": "chat.completion",
         "created": int(time.time()),
         "model": request.model,

@@ -16,6 +16,7 @@ from app.api.chat import (
     chat_completions,
 )
 from app.auth.middleware import AuthContext
+from app.runtime.agent_output import ResponseBufferLimitError, tool_call_progress_from_model_event
 from app.runtime.events import RuntimeStreamEvent
 
 
@@ -49,6 +50,52 @@ def test_final_response_buffer_discards_rejected_draft():
     response_buffer.append("final answer")
 
     assert response_buffer.text == "evidence-based final answer"
+
+
+def test_final_response_buffer_rejects_provider_overflow():
+    response_buffer = _FinalResponseBuffer(max_chars=5)
+    response_buffer.start_call()
+    response_buffer.append("safe")
+
+    with pytest.raises(ResponseBufferLimitError):
+        response_buffer.append(" overflow")
+
+    assert response_buffer.text == "safe"
+
+
+def test_tool_call_text_can_be_projected_as_bounded_progress():
+    message = AIMessage(
+        content="I am checking the focused test before editing.",
+        tool_calls=[{"id": "call-1", "name": "file_read", "args": {}}],
+    )
+
+    progress = tool_call_progress_from_model_event(
+        {"event": "on_chat_model_end", "data": {"output": message}}
+    )
+
+    assert progress == "I am checking the focused test before editing."
+
+
+def test_tool_call_progress_rejects_reasoning_blocks():
+    message = AIMessage(
+        content="<think>private reasoning</think> Reading the file.",
+        tool_calls=[{"id": "call-1", "name": "file_read", "args": {}}],
+    )
+
+    assert tool_call_progress_from_model_event(
+        {"event": "on_chat_model_end", "data": {"output": message}}
+    ) is None
+
+
+def test_tool_call_progress_rejects_plain_text_reasoning():
+    message = AIMessage(
+        content="I think the cache is stale because the key changed. Reading README.md.",
+        tool_calls=[{"id": "call-1", "name": "file_read", "args": {}}],
+    )
+
+    assert tool_call_progress_from_model_event(
+        {"event": "on_chat_model_end", "data": {"output": message}}
+    ) is None
 
 
 def test_chain_event_exposes_only_marked_verified_artifact_answer():
@@ -130,6 +177,8 @@ async def test_follow_up_keeps_client_session_id():
                 auth=auth,
             )
             assert response["choices"][0]["message"]["content"] == "ok"
+            assert response["run_id"].startswith("run-")
+            assert response["request_id"].startswith("req-")
 
     assert streamed_session_ids == ["tenant:conversation-1", "tenant:conversation-1"]
 

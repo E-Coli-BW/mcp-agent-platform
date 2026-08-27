@@ -33,6 +33,15 @@ class RunCancellationRegistry:
             event = self._events.get(run_id)
             return event.is_set() if event is not None else False
 
+    async def wait(self, run_id: str) -> bool:
+        """Wait until an active run is cancelled without polling."""
+        async with self._lock:
+            event = self._events.get(run_id)
+        if event is None:
+            return False
+        await event.wait()
+        return True
+
     async def unregister(self, run_id: str) -> None:
         async with self._lock:
             self._events.pop(run_id, None)

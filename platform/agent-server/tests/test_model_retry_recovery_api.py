@@ -59,10 +59,13 @@ def test_resume_due_model_retry_once(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_control, "get_checkpoint_store", lambda: checkpoints)
 
     async def fake_resume(**kwargs):
+        owner = kwargs["checkpoint"].lease_owner
+        assert owner is not None and owner.startswith("model:")
         completed = checkpoints.transition(
             "run-retry",
             state="completed",
             clear_lease=True,
+            owner=owner,
         )
         return ModelRetryResumeResult("recovered", completed)
 
@@ -99,6 +102,32 @@ def test_resume_rejects_future_backoff(tmp_path, monkeypatch):
     assert response["reason"] == "model retry backoff is still pending"
     assert response["retry_after_ms"] > 0
     assert checkpoints.get("run-future").state == "model_retry_waiting"
+
+
+def test_due_retry_waits_for_active_lease_expiry(tmp_path, monkeypatch):
+    checkpoints = SQLiteCheckpointStore(tmp_path / "runtime.sqlite3")
+    _start_run("run-leased")
+    checkpoints.save(
+        run_id="run-leased",
+        step_seq=1,
+        state="model_retry_waiting",
+        tool_name="__model__",
+        payload=_payload(time.time() - 1),
+    )
+    assert checkpoints.claim(
+        "run-leased",
+        owner="active-worker",
+        lease_seconds=30,
+        expected_state="model_retry_waiting",
+    ) is not None
+    monkeypatch.setattr(runtime_control, "get_checkpoint_store", lambda: checkpoints)
+
+    response = asyncio.run(runtime_control.resume_run("run-leased", _auth()))
+
+    assert response["accepted"] is False
+    assert response["reason"] == "lease held"
+    assert 0 < response["retry_after_ms"] <= 30_000
+    assert checkpoints.get("run-leased").lease_owner == "active-worker"
 
 
 def test_expired_execution_requires_reconciliation(tmp_path, monkeypatch):

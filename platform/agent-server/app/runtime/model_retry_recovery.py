@@ -65,6 +65,11 @@ async def resume_model_retry_run(
     from app.store.conversation import Message, get_conversation_store
 
     payload = checkpoint.payload
+    lease_owner = checkpoint.lease_owner
+    if lease_owner is None:
+        from app.agent.model.request_recovery import ModelRetryLeaseLostError
+
+        raise ModelRetryLeaseLostError("model retry resume requires an active lease owner")
     session_id = str(payload.get("session_id") or metadata["session_id"])
     model = str(metadata["model"])
     prompt_version = str(payload.get("prompt_version") or "")
@@ -78,6 +83,7 @@ async def resume_model_retry_run(
         request_id=f"resume-{run_id}",
         run_id=run_id,
         session_id=session_id,
+        workspace_root=str(metadata.get("workspace_root") or ""),
     )
     init_root_context(
         root_session_id=session_id,
@@ -103,7 +109,7 @@ async def resume_model_retry_run(
         engine = get_agent_engine()
         pending_nodes = await engine.pending_nodes(resume_request)
         if "call_llm" not in pending_nodes:
-            store.transition(
+            reconciled = store.transition(
                 run_id,
                 state="reconciliation_required",
                 payload={
@@ -111,7 +117,12 @@ async def resume_model_retry_run(
                     "graph_next": list(pending_nodes),
                 },
                 clear_lease=True,
+                owner=lease_owner,
             )
+            if reconciled is None:
+                from app.agent.model.request_recovery import ModelRetryLeaseLostError
+
+                raise ModelRetryLeaseLostError("model retry lease was lost before reconciliation")
             raise ModelRetryReconciliationError(
                 f"durable graph cannot resume model retry (next={pending_nodes!r})"
             )
@@ -161,7 +172,7 @@ async def resume_model_retry_run(
                 if terminal_reason == "model_retry_fingerprint_mismatch"
                 else "failed"
             )
-            store.transition(
+            transitioned = store.transition(
                 run_id,
                 state=next_state,
                 payload={
@@ -169,7 +180,14 @@ async def resume_model_retry_run(
                     "error_message": str(error),
                 },
                 clear_lease=True,
+                owner=lease_owner,
             )
+            if transitioned is None:
+                from app.agent.model.request_recovery import ModelRetryLeaseLostError
+
+                raise ModelRetryLeaseLostError(
+                    "model retry lease was lost while recording resume failure"
+                ) from error
         await recorder.finish_run(
             run_id,
             RunStatus.FAILED,

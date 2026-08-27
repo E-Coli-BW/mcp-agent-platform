@@ -96,15 +96,32 @@ async def resume_run(
                 "retry_after_ms": max(0, int((resume_at - time.time()) * 1000)),
                 "checkpoint": checkpoint.to_dict(),
             }
+        from app.agent.model.request_recovery import model_retry_lease_owner
+
+        owner = model_retry_lease_owner(run_id)
         claimed = store.claim(
             run_id,
-            owner=f"api:{auth.user_id}",
+            owner=owner,
             lease_seconds=max(60, settings.llm_timeout + 30),
             expected_state="model_retry_waiting",
         )
         if claimed is None:
-            return {"accepted": False, "reason": "lease held", "checkpoint": checkpoint.to_dict()}
-        executing = store.transition(run_id, state="model_retry_executing")
+            current = store.get(run_id) or checkpoint
+            retry_after_ms = max(
+                0,
+                int(((current.lease_expires_at or time.time()) - time.time()) * 1000),
+            )
+            return {
+                "accepted": False,
+                "reason": "lease held",
+                "retry_after_ms": retry_after_ms,
+                "checkpoint": current.to_dict(),
+            }
+        executing = store.transition(
+            run_id,
+            state="model_retry_executing",
+            owner=owner,
+        )
         if executing is None:
             raise HTTPException(status_code=409, detail="retry checkpoint disappeared")
         from app.runtime.model_retry_recovery import resume_model_retry_run
@@ -131,9 +148,10 @@ async def resume_run(
         }
 
     if checkpoint.state == "model_retry_executing":
+        owner = f"reconcile:{auth.user_id}"
         claimed = store.claim(
             run_id,
-            owner=f"reconcile:{auth.user_id}",
+            owner=owner,
             expected_state="model_retry_executing",
         )
         if claimed is None:
@@ -143,6 +161,7 @@ async def resume_run(
             state="reconciliation_required",
             payload={"reason": "provider outcome is unknown after process crash"},
             clear_lease=True,
+            owner=owner,
         )
         await get_run_recorder().finish_run(
             run_id,
@@ -175,6 +194,7 @@ async def resume_run(
         request_id=f"resume-{run_id}",
         run_id=run_id,
         session_id=checkpoint.payload.get("session_id", metadata["session_id"]),
+        workspace_root=str(metadata.get("workspace_root") or ""),
     )
 
     async def execute(active_checkpoint):
@@ -213,7 +233,7 @@ async def cancel_run(
         "run_id": run_id,
         "accepted": accepted,
         "status": "cancellation_requested" if accepted else metadata["status"],
-        "note": "cooperative cancel — honored between runtime events",
+        "note": "cancellation interrupts the runtime event wait and active graph task",
     }
 
 

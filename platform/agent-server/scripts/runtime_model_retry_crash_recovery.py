@@ -19,6 +19,8 @@ from pathlib import Path
 import httpx
 import jwt
 
+from app.tools.workspace_resolver import _tenant_directory_key
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -88,7 +90,15 @@ def free_port() -> int:
 def auth_headers() -> dict[str, str]:
     now = int(time.time())
     token = jwt.encode(
-        {"sub": "recovery-test", "tenant_id": "tenant-a", "iat": now, "exp": now + 300},
+        {
+            "sub": "recovery-test",
+            "tenant_id": "tenant-a",
+            "iss": "mcp-agent-local",
+            "aud": "agent-server",
+            "iat": now,
+            "exp": now + 300,
+            "jti": "runtime-recovery-test",
+        },
         "default-dev-secret-DO-NOT-USE-IN-PRODUCTION",
         algorithm="HS256",
     )
@@ -110,7 +120,13 @@ def wait_for_health(port: int, process: subprocess.Popen, timeout: float = 15) -
     raise TimeoutError("agent server did not become healthy")
 
 
-def start_agent(port: int, provider_port: int, database: Path, config_dir: Path) -> subprocess.Popen:
+def start_agent(
+    port: int,
+    provider_port: int,
+    database: Path,
+    config_dir: Path,
+    workspace_base: Path,
+) -> subprocess.Popen:
     env = os.environ.copy()
     env.update(
         {
@@ -121,6 +137,7 @@ def start_agent(port: int, provider_port: int, database: Path, config_dir: Path)
             "AGENT_MLX_BASE_URL": f"http://127.0.0.1:{provider_port}",
             "AGENT_AGENT_CONFIG_DIR": str(config_dir),
             "AGENT_PLUGINS_DIR": str(config_dir / "plugins"),
+            "AGENT_WORKSPACE": str(workspace_base),
             "AGENT_RUNTIME_STORE_BACKEND": "sqlite",
             "AGENT_RUNTIME_STORE_SQLITE_PATH": str(database),
             "AGENT_MODEL_RETRY_MAX_RETRIES": "2",
@@ -128,6 +145,7 @@ def start_agent(port: int, provider_port: int, database: Path, config_dir: Path)
             "AGENT_MODEL_RETRY_MAX_DELAY_MS": "30000",
             "AGENT_MODEL_RETRY_JITTER_RATIO": "0",
             "AGENT_LLM_TIMEOUT": "5",
+            "AGENT_ALLOW_LEGACY_HMAC_AUTH": "true",
             "AGENT_REDIS_URL": "redis://127.0.0.1:1/0",
             "AGENT_KAFKA_BOOTSTRAP_SERVERS": "",
             "AGENT_SKILLS_INDEX_ENABLED": "false",
@@ -179,22 +197,30 @@ def main() -> None:
         root = Path(directory)
         database = root / "runtime.sqlite3"
         config_dir = root / "empty-config"
-        workspace = root / "workspace"
+        workspace_base = root / "tenants"
+        workspace = workspace_base / _tenant_directory_key("tenant-a") / "workspace"
         config_dir.mkdir()
-        workspace.mkdir()
+        workspace.mkdir(parents=True)
 
         provider = ScriptedProvider(("127.0.0.1", 0), ProviderHandler)
         provider_thread = threading.Thread(target=provider.serve_forever, daemon=True)
         provider_thread.start()
         provider_port = int(provider.server_address[1])
         first_port = free_port()
-        first = start_agent(first_port, provider_port, database, config_dir)
+        first = start_agent(
+            first_port,
+            provider_port,
+            database,
+            config_dir,
+            workspace_base,
+        )
         requester_error: list[str] = []
         second: subprocess.Popen | None = None
         try:
             wait_for_health(first_port, first)
             httpx.post(
                 f"http://127.0.0.1:{first_port}/api/workspace/open",
+                headers=auth_headers(),
                 json={"path": str(workspace)},
                 timeout=5,
             ).raise_for_status()
@@ -232,7 +258,13 @@ def main() -> None:
                 )
 
             second_port = free_port()
-            second = start_agent(second_port, provider_port, database, config_dir)
+            second = start_agent(
+                second_port,
+                provider_port,
+                database,
+                config_dir,
+                workspace_base,
+            )
             wait_for_health(second_port, second)
             recoverable = httpx.get(
                 f"http://127.0.0.1:{second_port}/v1/runtime/recoverable",

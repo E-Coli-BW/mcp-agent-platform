@@ -47,6 +47,14 @@ def test_make_model_call_event_shape():
         completion_tokens=45,
         duration_ms=678,
         status="ok",
+        performance={
+            "ttft_ms": 120,
+            "prefill_tokens": 123,
+            "prefill_duration_ms": 300,
+            "prefill_tokens_per_second": 410.0,
+        },
+        input_prefix_hash="sha256:" + ("b" * 64),
+        input_prefix_chars=1_234,
     )
 
     assert event["event_id"].startswith("mcall-")
@@ -59,6 +67,9 @@ def test_make_model_call_event_shape():
     assert event["completion_tokens"] == 45
     assert event["duration_ms"] == 678
     assert event["status"] == "ok"
+    assert event["performance"]["ttft_ms"] == 120
+    assert event["input_prefix_hash"] == "sha256:" + ("b" * 64)
+    assert event["input_prefix_chars"] == 1_234
 
 
 def test_current_trace_id_best_effort():

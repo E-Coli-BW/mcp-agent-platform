@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from app.context.request_context import set_request_context
@@ -63,6 +64,20 @@ class FakeFanIn:
 
     async def close(self):
         return None
+
+
+class BlockingFanIn(FakeFanIn):
+    def __init__(self, *, agent_events, root_session_id) -> None:
+        super().__init__(agent_events=agent_events, root_session_id=root_session_id)
+        self.waiting = asyncio.Event()
+        self.closed = asyncio.Event()
+
+    async def next_event(self, timeout):
+        self.waiting.set()
+        await asyncio.Event().wait()
+
+    async def close(self):
+        self.closed.set()
 
 
 def prompt_resolution(**_kwargs):
@@ -161,3 +176,47 @@ async def test_observer_failure_does_not_change_successful_turn():
     assert await recorder.get_status("run-1") == RunStatus.COMPLETED
     assert store.messages[-1][1].content == "completed"
     assert lane.released == ["tenant:session"]
+
+
+async def test_cancellation_interrupts_silent_agent_without_poll_delay():
+    recorder = InMemoryRunRecorder()
+    cancellation = RunCancellationRegistry()
+    fan_in_holder = {}
+
+    def blocking_fan_in(**kwargs):
+        fan_in = BlockingFanIn(**kwargs)
+        fan_in_holder["value"] = fan_in
+        return fan_in
+
+    set_request_context("request-cancel", "run-cancel", "tenant:session")
+    coordinator = RunCoordinator(
+        FakeAgentEngine(),
+        prompt_resolver=prompt_resolution,
+        conversation_store=FakeConversationStore(),
+        recorder=recorder,
+        cancellation=cancellation,
+        session_lane=FakeSessionLane(),
+        fan_in_factory=blocking_fan_in,
+    )
+
+    collect_task = asyncio.create_task(
+        _collect_events(coordinator, runtime_request())
+    )
+    while "value" not in fan_in_holder:
+        await asyncio.sleep(0)
+    fan_in = fan_in_holder["value"]
+    await fan_in.waiting.wait()
+
+    assert await cancellation.request("run-cancel") is True
+    events = await asyncio.wait_for(collect_task, timeout=0.5)
+
+    assert fan_in.closed.is_set()
+    assert await recorder.get_status("run-cancel") == RunStatus.CANCELLED
+    assert any(
+        event.kind == "status" and event.payload.get("state") == "cancelled"
+        for event in events
+    )
+
+
+async def _collect_events(coordinator, request):
+    return [event async for event in coordinator.stream_turn(request)]

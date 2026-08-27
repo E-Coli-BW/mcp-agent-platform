@@ -128,9 +128,12 @@ def make_model_call_event(
     duration_ms: int,
     status: str,
     error_class: str | None = None,
+    performance: dict[str, Any] | None = None,
+    input_prefix_hash: str | None = None,
+    input_prefix_chars: int = 0,
 ) -> dict[str, Any]:
     normalized_max_tokens = max_tokens if isinstance(max_tokens, int) and max_tokens > 0 else None
-    return {
+    event = {
         "event_id": f"mcall-{uuid.uuid4().hex}",
         "run_id": run_id,
         "request_id": request_id,
@@ -150,9 +153,14 @@ def make_model_call_event(
         "prompt_tokens": max(0, int(prompt_tokens)),
         "completion_tokens": max(0, int(completion_tokens)),
         "duration_ms": max(0, int(duration_ms)),
+        "input_prefix_hash": input_prefix_hash,
+        "input_prefix_chars": max(0, int(input_prefix_chars)),
         "status": status,
         "error_class": error_class,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
     }
+    if performance:
+        event["performance"] = performance
+    return event
 
 

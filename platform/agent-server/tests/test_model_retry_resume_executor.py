@@ -2,7 +2,10 @@ import asyncio
 
 import pytest
 
-from app.agent.model.request_recovery import ModelRetryFingerprintError
+from app.agent.model.request_recovery import (
+    ModelRetryFingerprintError,
+    model_retry_lease_owner,
+)
 from app.runtime import get_run_recorder, reset_run_recorder_for_tests
 from app.runtime.checkpoint import SQLiteCheckpointStore
 from app.runtime.model_retry_recovery import resume_model_retry_run
@@ -18,7 +21,7 @@ def reset_recorder():
 @pytest.mark.asyncio
 async def test_fingerprint_drift_requires_reconciliation(tmp_path, monkeypatch):
     store = SQLiteCheckpointStore(tmp_path / "runtime.sqlite3")
-    checkpoint = store.save(
+    store.save(
         run_id="run-drift",
         step_seq=1,
         state="model_retry_executing",
@@ -30,6 +33,12 @@ async def test_fingerprint_drift_requires_reconciliation(tmp_path, monkeypatch):
             "attempts_failed": 1,
         },
     )
+    checkpoint = store.claim(
+        "run-drift",
+        owner=model_retry_lease_owner("run-drift"),
+        expected_state="model_retry_executing",
+    )
+    assert checkpoint is not None
     await get_run_recorder().start_run(
         run_id="run-drift",
         request_id="request-1",

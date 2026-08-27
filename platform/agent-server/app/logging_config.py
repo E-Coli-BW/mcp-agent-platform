@@ -22,6 +22,20 @@ Log output example (DEBUG):
 import logging
 import os
 import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
+
+class PrivateRotatingFileHandler(RotatingFileHandler):
+    """Keep every active log file private, including after rollover."""
+
+    def _open(self):
+        stream = super()._open()
+        try:
+            os.chmod(self.baseFilename, 0o600)
+        except OSError:
+            pass
+        return stream
 
 
 def configure_logging():
@@ -30,16 +44,39 @@ def configure_logging():
     Call this once at startup (main.py lifespan).
     """
     log_level = os.environ.get("AGENT_LOG_LEVEL", "INFO").upper()
+    log_file = os.environ.get("AGENT_LOG_FILE", ".runtime/agent-server.log").strip()
 
     # Format: timestamp [logger] LEVEL message
     fmt = "%(asctime)s.%(msecs)03d [%(name)s] %(levelname)-5s %(message)s"
     datefmt = "%H:%M:%S"
 
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+    if log_file:
+        path = Path(log_file).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(path.parent, 0o700)
+        except OSError:
+            pass
+        file_handler = PrivateRotatingFileHandler(
+            path,
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        )
+        for retained_path in path.parent.glob(f"{path.name}.*"):
+            if retained_path.is_file():
+                try:
+                    os.chmod(retained_path, 0o600)
+                except OSError:
+                    pass
+        handlers.append(file_handler)
+
     logging.basicConfig(
         level=getattr(logging, log_level, logging.INFO),
         format=fmt,
         datefmt=datefmt,
-        stream=sys.stderr,
+        handlers=handlers,
         force=True,  # Override any existing config
     )
 
@@ -61,5 +98,7 @@ def configure_logging():
     logging.getLogger("watchfiles").setLevel(logging.WARNING)
 
     logging.getLogger(__name__).info(
-        "📋 Logging configured: level=%s", log_level,
+        "📋 Logging configured: level=%s file=%s",
+        log_level,
+        log_file or "disabled",
     )

@@ -144,6 +144,45 @@ def test_expired_waiting_lease_can_be_claimed_by_recovery_worker(tmp_path):
     assert store.get("run-crashed").lease_owner == "recovery-worker"
 
 
+def test_expired_owner_cannot_transition_after_recovery_worker_claims(tmp_path):
+    store = SQLiteCheckpointStore(tmp_path / "runtime.sqlite3")
+    store.save(
+        run_id="run-fenced",
+        step_seq=1,
+        state="model_retry_executing",
+        payload=_payload(0),
+    )
+    assert store.claim(
+        "run-fenced",
+        owner="worker-a",
+        expected_state="model_retry_executing",
+    ) is not None
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            "UPDATE agent_run_checkpoints SET lease_expires_at = ? WHERE run_id = ?",
+            (time.time() - 1, "run-fenced"),
+        )
+    assert store.claim(
+        "run-fenced",
+        owner="worker-b",
+        expected_state="model_retry_executing",
+    ) is not None
+
+    assert store.transition(
+        "run-fenced",
+        state="completed",
+        clear_lease=True,
+        owner="worker-a",
+    ) is None
+    assert store.get("run-fenced").state == "model_retry_executing"
+    assert store.transition(
+        "run-fenced",
+        state="completed",
+        clear_lease=True,
+        owner="worker-b",
+    ).state == "completed"
+
+
 def test_in_flight_crash_can_only_move_to_reconciliation(tmp_path):
     store = SQLiteCheckpointStore(tmp_path / "runtime.sqlite3")
     store.save(

@@ -15,6 +15,7 @@ from app.agent.execution_policy.system_prompts import (
     PromptResolution,
     resolve_system_prompt,
 )
+from app.agent.tool_routing.required_tools import tool_message_is_error
 from app.config import settings
 from app.context.request_context import get_request_context, set_prompt_version
 from app.runtime import RunStatus, get_run_recorder
@@ -23,6 +24,7 @@ from app.runtime.agent_output import (
     FinalResponseBuffer,
     ToolEventTracker,
     is_actor_model_event,
+    tool_call_progress_from_model_event,
     verified_artifact_answer_from_chain_event,
 )
 from app.runtime.cancellation import (
@@ -137,6 +139,9 @@ class RunCoordinator:
             if request.temperature is not None
             else settings.default_temperature
         )
+        from app.tools.agent_mode import get_workspace_root
+
+        workspace_root = get_workspace_root()
         observer_context = TurnObserverContext(
             run_id=request_context.run_id,
             request_id=request_context.request_id,
@@ -163,9 +168,10 @@ class RunCoordinator:
             else request.user_input
         )
         logger.info(
-            "Received user message [session=%s, model=%s]: %s",
+            "Received user message [session=%s, model=%s, workspace=%s]: %s",
             request.session_id,
             request.model,
+            workspace_root,
             input_preview,
         )
 
@@ -175,7 +181,7 @@ class RunCoordinator:
         cancel_requested = False
         fan_in: AgentEventFanIn | None = None
         approval_notifier_token = None
-        response_buffer = FinalResponseBuffer()
+        response_buffer = FinalResponseBuffer(max_chars=settings.max_response_chars)
         tool_events = ToolEventTracker()
         start_time = time.time()
 
@@ -191,6 +197,7 @@ class RunCoordinator:
                     "prompt_version": prompt.version,
                     "prompt_hash": prompt.content_hash,
                     "temperature": effective_temperature,
+                    "workspace_root": workspace_root,
                 },
             )
             await self._cancellation.register(request_context.run_id)
@@ -298,7 +305,27 @@ class RunCoordinator:
                         break
 
                     try:
-                        source, event = await fan_in.next_event(timeout=15)
+                        next_event = await self._next_event_or_cancel(
+                            fan_in,
+                            request_context.run_id,
+                        )
+                        if next_event is None:
+                            logger.info(
+                                "Root run cancellation requested [run=%s]",
+                                request_context.run_id,
+                            )
+                            cancel_requested = True
+                            await self._recorder.record_event(
+                                request_context.run_id,
+                                "cancel_requested",
+                                {
+                                    "request_id": request_context.request_id,
+                                    "session_id": request.session_id,
+                                },
+                            )
+                            await fan_in.close()
+                            break
+                        source, event = next_event
                     except TimeoutError:
                         yield RuntimeStreamEvent("keepalive")
                         continue
@@ -341,6 +368,22 @@ class RunCoordinator:
                         )
                     elif kind == "on_chat_model_end":
                         await observers.observe("model_completed", raw_event=event)
+                        if (
+                            settings.tool_call_progress_mode == "tool_call_text"
+                            and is_actor_model_event(event)
+                        ):
+                            progress = tool_call_progress_from_model_event(event)
+                            if progress:
+                                progress_event = await self._recorder.record_event(
+                                    request_context.run_id,
+                                    "status_progress",
+                                    {"state": "working", "message": progress},
+                                )
+                                yield RuntimeStreamEvent(
+                                    "status",
+                                    {"state": "working", "message": progress},
+                                    event_id=progress_event.event_id,
+                                )
                     elif kind == "on_tool_start":
                         async for visible_event in self._handle_tool_start(
                             event,
@@ -490,6 +533,27 @@ class RunCoordinator:
                 await self._session_lane.release(request.session_id)
             await self._cancellation.unregister(request_context.run_id)
 
+    async def _next_event_or_cancel(
+        self,
+        fan_in: AgentEventFanIn,
+        run_id: str,
+    ) -> tuple[str, Any] | None:
+        event_task = asyncio.create_task(fan_in.next_event(timeout=15))
+        cancel_task = asyncio.create_task(self._cancellation.wait(run_id))
+        try:
+            done, _ = await asyncio.wait(
+                {event_task, cancel_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if cancel_task in done and cancel_task.result():
+                return None
+            return event_task.result()
+        finally:
+            for task in (event_task, cancel_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(event_task, cancel_task, return_exceptions=True)
+
     def _create_observers(
         self,
         context: TurnObserverContext,
@@ -573,7 +637,9 @@ class RunCoordinator:
         if tool_sequence is None:
             return
         tool_name = event.get("name", "unknown")
-        tool_output = str(event.get("data", {}).get("output", ""))[:500]
+        raw_tool_output = event.get("data", {}).get("output", "")
+        tool_output = str(raw_tool_output)[:500]
+        tool_status = "error" if tool_message_is_error(raw_tool_output) else "ok"
         tool_input = event.get("data", {}).get("input", {})
         normalized_input = (
             tool_input if isinstance(tool_input, dict) else {"input": tool_input}
@@ -585,6 +651,7 @@ class RunCoordinator:
                 "tool": tool_name,
                 "input": normalized_input,
                 "output": tool_output,
+                "status": tool_status,
             },
             raw_event=event,
         )
@@ -596,13 +663,18 @@ class RunCoordinator:
                 "tool": tool_name,
                 "input": tool_input,
                 "output_preview": tool_output[:200],
+                "status": tool_status,
             },
         )
         yield RuntimeStreamEvent(
             "tool_end",
             {
                 "tool": tool_name,
-                "data": {"input": tool_input, "output": tool_output[:200]},
+                "data": {
+                    "input": tool_input,
+                    "output": tool_output[:200],
+                    "status": tool_status,
+                },
                 "seq": tool_sequence,
             },
             event_id=recorded.event_id,
