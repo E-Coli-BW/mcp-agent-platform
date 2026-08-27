@@ -5,7 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
-import org.springframework.ai.chat.memory.InMemoryChatMemory;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.stereotype.Service;
 
 /**
@@ -18,7 +18,7 @@ import org.springframework.stereotype.Service;
  * The patterns map 1:1:
  *   - LangGraph tools          → Spring AI @Tool beans
  *   - prompt modifier          → ChatClient Advisors (MessageChatMemoryAdvisor)
- *   - MemorySaver checkpointer → InMemoryChatMemory
+ *   - MemorySaver checkpointer → MessageWindowChatMemory
  *   - astream_events()         → ChatClient.prompt().stream().content()
  *
  * INTERVIEW POINT: "I built the main agent in Python (LangGraph) and a
@@ -54,7 +54,8 @@ public class ReviewAgent {
         this.chatClient = chatClientBuilder
                 .defaultSystem(SYSTEM_PROMPT)
                 .defaultTools(fileTools)
-                .defaultAdvisors(new MessageChatMemoryAdvisor(new InMemoryChatMemory()))
+                .defaultAdvisors(MessageChatMemoryAdvisor.builder(
+                    MessageWindowChatMemory.builder().build()).build())
                 .build();
         log.info("ReviewAgent initialized with Spring AI ChatClient + {} tools", 3);
     }

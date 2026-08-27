@@ -94,7 +94,8 @@ public class JpaMemoryRepositoryImpl implements MemoryRepository {
     }
 
     @Override
-    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public int recordAccess(String tenantId, String key) {
         // CURRENT_TIMESTAMP in HQL returns java.sql.Timestamp, but
         // MemoryEntity.lastAccessedAt is java.time.Instant. Hibernate 6
