@@ -1,8 +1,14 @@
 # agent-eval-harness
 
-Offline quality eval for the MCP agent. Pytest + golden YAML cases +
-composable scorers + a CI gate that fails the PR when this PR regresses
-a previously-passing case.
+Quality evaluation tooling for the MCP agent: golden YAML cases, composable
+scorers, deterministic unit tests, and a baseline-comparison CLI.
+Live case execution calls a running Agent; it is not an offline-only test.
+
+The default repository CI runs build and test checks; that is not evidence
+that live-model evaluations gate every PR. This harness also provides
+deterministic tests and a coding-fixture preflight. To use `eval-gate` as a
+quality gate, explicitly run the live suite, supply a reviewed baseline, and
+propagate its exit status.
 
 ## Why this is separate from the dashboard
 
@@ -68,7 +74,7 @@ platform/eval-harness/
 │           └── simple_starter.json   # 10 bundled cases; download more separately
 ├── ci/
 │   ├── __init__.py
-│   └── eval_gate.py                  # CI hook: pass-rate floor + regression check
+│   └── eval_gate.py                  # CLI: pass-rate floor + regression check
 ├── tests/                            # pure-logic unit tests
 │   ├── test_scorers.py
 │   ├── test_llm_judge.py
@@ -103,7 +109,7 @@ cat runs/2026-05-29T10-23-12/report.md
 # 5. Promote this run to the baseline (when you've validated it).
 cp runs/2026-05-29T10-23-12/summary.json baselines/master.json
 
-# 6. In CI: gate against the baseline.
+# 6. Explicitly gate a completed run against the reviewed baseline.
 ../agent-server/.venv/bin/eval-gate runs/<latest>/summary.json \
     --baseline baselines/master.json --min-pass-rate 0.90
 ```
@@ -191,7 +197,7 @@ expected:
 
 Resolution priority: `--pass-threshold` > YAML `min_pass_rate` > default 1.0.
 
-The CI gate (`eval-gate`) keys off the *aggregate* `passed` boolean, so a
+The comparison CLI (`eval-gate`) keys off the *aggregate* `passed` boolean, so a
 case with `min_pass_rate: 0.6` that passes 3/5 is treated as PASS by the
 gate — no special casing needed.
 

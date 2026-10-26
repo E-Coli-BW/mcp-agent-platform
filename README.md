@@ -2,6 +2,15 @@
 
 A full-stack **Agent runtime platform** built for learning and demonstrating distributed systems + LLM agent engineering.
 
+This is a personal learning project developed with AI coding agents, not a
+production deployment. I use it to practice runtime design, tool integration,
+review, and validation. The modules below include optional experiments; they
+are not all active in the default chat path.
+
+For a small, reproducible example, see the [local MCP demo](#local-mcp-demo).
+For the Agent and browser UI, start with the
+[Agent Server setup guide](platform/agent-server/README.md#quick-start).
+
 ## Architecture
 
 ```text
@@ -18,7 +27,7 @@ AgentEngine -> Agent registry/cache -> modular agent_graph
 Agent capabilities
   execution_policy | tool_routing | compressor | model | skills | delegation
 	|
-Tool authorization -> local tools / RAG / Java MCP services
+Tool authorization -> local tools / RAG / Java REST tool services
 	|
 PostgreSQL | Redis | Kafka | Docker sandbox | Ollama/model providers
 ```
@@ -48,9 +57,11 @@ shell.
 - **Intent classification** for routing to specialized agents
 - **Declarative YAML config** — define agent behavior without code changes, hot-reload
 
-### 🔧 MCP Protocol Tools
-- **stdio mode** (TypeScript): memory-store, local-file-search
-- **HTTP mode** (Java): memory-server, code-exec-server, file-search-server
+### 🔧 Tool Integration
+- **MCP over stdio** (TypeScript): memory-store, local-file-search
+- **Custom REST bridge** (Java): memory-server, codeexec-server, filesearch-server.
+  The Python client calls `/api/tools/{tool_name}`; this bridge is not an
+  implementation of MCP Streamable HTTP.
 - **Agent SDK**: `@tool` decorator + `ToolContext` + `ToolTestHarness` for plugin development
 
 ### 🧠 Model Router
@@ -66,12 +77,22 @@ shell.
 ### 📊 Eval Harness
 - 3-axis evaluation: correctness / efficiency / safety
 - Controlled experiment framework (4-arm A/B testing)
-- CI-integrated eval gate to block quality regression
+- Baseline comparison CLI (`eval-gate`) with pass-rate and per-case regression checks
+
+The default CI runs build and test checks for Java, Python, and TypeScript.
+The eval harness also provides deterministic tests and a coding-fixture
+preflight; those are different from running a live-model quality gate.
+Live evaluations require an explicitly configured Agent/model and a reviewed
+baseline; see the [eval guide](platform/eval-harness/README.md).
 
 ### 🔐 Platform Engineering
 - **Auth Service**: RS256 JWT + JWKS endpoint + kid-based key rotation + multi-tenant policy
 - **Memory Server**: PostgreSQL full-text search (tsvector+GIN), TF-IDF fallback, and optional Redis cache with no-op degradation
-- **Code Exec Server**: Docker sandbox with OWASP hardening + resource limits
+- **Code Exec Server**: Docker execution with network disabled, a read-only root
+  filesystem, an unprivileged user, dropped capabilities, and CPU/memory/process
+  limits. These controls reduce exposure; they are not a guarantee against
+  container escape or a certification for executing arbitrary hostile code.
+  See the [security policy](SECURITY.md).
 
 ## Quick Start
 
@@ -81,8 +102,8 @@ shell.
 # Build all
 make build
 
-# Run tests
-make test          # All (Java + Python)
+# Run deterministic tests
+make test          # Java + Python + TypeScript + frontend checks
 make test-java     # Java only
 make test-python   # Python only
 
@@ -96,6 +117,44 @@ make docker-up-full
 Kafka, tracing, service discovery, and Elasticsearch are optional for ordinary
 local Agent chat. `make docker-up-full` waits for healthy services and uses
 multi-architecture images, including native ARM64 images on Apple Silicon.
+
+These commands build/test the project and start dependencies, not the Agent
+application itself. Continue with the
+[Agent Server setup guide](platform/agent-server/README.md#quick-start) to
+configure a model and start the API/UI. Optional services and model-dependent
+features need their own configuration.
+
+## Local MCP Demo
+
+This read-only terminal demo starts the real TypeScript file-search server,
+connects through the MCP SDK over stdio, discovers its tools, and reads the
+first three lines of this README. No model, cloud credentials, Java services,
+or Docker are required.
+
+From the repository root, with Node.js 20+:
+
+```bash
+npm ci --prefix platform/mcp-cli --workspaces=false
+npm run build --prefix platform/mcp-cli
+node platform/mcp-cli/demo.mjs
+```
+
+Output includes:
+
+```text
+MCP stdio: connected to local-file-search
+tools/list: read_file_content available
+tools/call: README.md, lines 1-3
+    1 | # MCP Agent Platform
+    2 |
+    3 | A full-stack **Agent runtime platform** built for learning and demonstrating distributed systems + LLM agent engineering.
+PASS: file content matches the repository README
+```
+
+The client checks the returned content against the actual file and closes the
+server connection when finished. This demonstrates the MCP tool boundary,
+not model reasoning, a complete coding task, or sandbox isolation. It does
+not exercise the separate Java REST bridge.
 
 ## Project Structure
 
@@ -112,16 +171,21 @@ multi-architecture images, including native ARM64 images on Apple Silicon.
 │   ├── eval-harness/        # Python: 3-axis eval + controlled experiments
 │   ├── mcp-common/          # Java: Shared security lib
 │   ├── common-spi/          # Java: SPI interfaces
+│   ├── mcp-cli/             # TypeScript: MCP stdio servers + local demo
 │   └── frontend/            # React 19 + Vite
-├── src/                     # TypeScript MCP servers (stdio)
-├── tools/                   # TypeScript: memory-ts
 ├── Makefile
 └── package.json
 ```
 
 ## Testing
 
-500+ test cases across Java (JUnit 5 + Testcontainers) and Python (pytest + asyncio).
+Java tests use JUnit 5/Testcontainers; Python tests use pytest/asyncio.
+TypeScript MCP tests and frontend checks have separate Makefile targets.
+Test counts and results depend on the checkout and available dependencies;
+the presence of a test or workflow is not evidence that a live Agent task
+passed. See [CI configuration](.github/workflows/ci.yml) for the configured
+checks and [eval documentation](platform/eval-harness/README.md) for
+model-dependent validation.
 
 ## License
 

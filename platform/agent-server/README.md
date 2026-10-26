@@ -10,7 +10,7 @@ OpenAI-compatible coding agent with LangGraph, tool use, and RAG.
 | **Ollama** | ✅ Yes | `brew install ollama` then `ollama serve` |
 | **A model in Ollama** | ✅ Yes | `ollama pull qwen2.5:7b` (default model) |
 | **Redis** | ⚠️ Optional | `brew install redis && redis-server` — needed for conversation persistence & RAG vector search. Without it the server still starts but sessions are ephemeral. |
-| **Java 21** | ⚠️ Optional | Only if using the MCP tool backends (memory-server, filesearch-server, codeexec-server) |
+| **Java 21** | ⚠️ Optional | Only if using the Java REST tool services (memory-server, filesearch-server, codeexec-server) |
 
 ## Quick Start
 
@@ -111,9 +111,12 @@ The platform has THREE model roles with different requirements:
 | **Strong model** | `strong_model` | Complex reasoning | `openai/gpt-4o` or `qwen2.5:7b` |
 | **Cheap model** | `cheap_model` | Fast text→text only | `mlx/Qwen2.5-0.5B-Instruct-4bit` |
 
-**Why the split?** The main agent needs tool calling (function schemas, structured
-JSON output) — only 7B+ models handle this. But auxiliary tasks (reflexion grading,
-reranking, verification) are simple text→text and can use a much faster small model.
+**Why the split?** The main agent needs reliable tool calling (function schemas,
+structured arguments). Model size alone does not establish that capability;
+validate the selected model/provider against the project's tool-call cases.
+Auxiliary tasks such as grading and reranking can use a smaller model when
+task-specific evaluations justify the quality/latency trade-off. Model-based
+self-checks are not an independent correctness oracle.
 
 ### Feature Dependencies — Which Features Use Which Model
 
