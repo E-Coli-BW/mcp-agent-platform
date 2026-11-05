@@ -1,10 +1,7 @@
 """Load agent configs from YAML files."""
 
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,6 +27,11 @@ def load_agent_config(path: str) -> AgentConfig:
 
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
+    routing = raw.get("routing") or {}
+    if routing:
+        raise ValueError(
+            "Agent routing is not supported; configure one explicit model per agent"
+        )
     return AgentConfig(
         id=raw["id"],
         name=raw["name"],
@@ -39,7 +41,7 @@ def load_agent_config(path: str) -> AgentConfig:
         prompt=raw.get("prompt", ""),
         tools=raw.get("tools", []),
         guardrails=raw.get("guardrails", {}),
-        routing=raw.get("routing", {}),
+        routing={},
         knowledge=raw.get("knowledge", {}),
         runtime=raw.get("runtime", {}),
     )
@@ -49,16 +51,13 @@ def load_all_configs(config_dir: str) -> dict[str, AgentConfig]:
     """Load all agent configs from a directory.
 
     Returns a dict mapping agent ID to AgentConfig.
-    Skips files that fail to parse with a warning.
+    Invalid files fail the whole load so declared agents cannot disappear silently.
     """
     configs: dict[str, AgentConfig] = {}
     config_path = Path(config_dir)
     if not config_path.exists():
         return configs
-    for f in config_path.glob("*.yaml"):
-        try:
-            cfg = load_agent_config(str(f))
-            configs[cfg.id] = cfg
-        except Exception as e:
-            logger.warning("Failed to load %s: %s", f, e)
+    for config_file in sorted(config_path.glob("*.yaml")):
+        config = load_agent_config(str(config_file))
+        configs[config.id] = config
     return configs

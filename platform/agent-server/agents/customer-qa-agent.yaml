@@ -50,7 +50,3 @@ guardrails:
   max_tool_calls: 4
   max_tokens: 2048
   max_context_chars: 12000
-
-routing:
-  complex_model: openai/gpt-4o
-  simple_model: qwen2.5:7b

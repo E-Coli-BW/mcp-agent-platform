@@ -106,7 +106,3 @@ runtime:
   verification_enabled: false
   allow_subagents: false
   direct_tool_routing_enabled: true
-
-routing:
-  complex_model: openai/gpt-4o
-  simple_model: qwen2.5:7b
