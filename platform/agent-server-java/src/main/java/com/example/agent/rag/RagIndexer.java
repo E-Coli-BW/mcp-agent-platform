@@ -34,6 +34,7 @@ public class RagIndexer {
         List<CodeChunk> chunks = chunkerRegistry.chunkDirectory(directory);
         log.info("Chunked {} chunks from {}", chunks.size(), directory);
         if (chunks.isEmpty()) {
+            retriever.buildIndex(List.of(), List.of());
             return Mono.empty();
         }
         List<String> texts = chunks.stream().map(CodeChunk::content).toList();
