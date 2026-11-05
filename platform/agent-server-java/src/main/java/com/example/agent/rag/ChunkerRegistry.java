@@ -60,6 +60,16 @@ public class ChunkerRegistry {
         this.htmlChunker = htmlChunker;
     }
 
+    /** Returns whether the production indexer will dispatch this file to a chunker. */
+    public boolean isIndexableFile(Path file) {
+        return EXTENSION_TO_TYPE.containsKey(getExtension(file));
+    }
+
+    /** Returns whether the production indexer skips this directory subtree. */
+    public boolean shouldSkipDirectory(Path directory) {
+        return SKIP_DIRS.contains(directory.getFileName().toString());
+    }
+
     /**
      * Chunk a single file using the appropriate chunker.
      */
@@ -85,7 +95,7 @@ public class ChunkerRegistry {
             Files.walkFileTree(directory, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                    if (SKIP_DIRS.contains(dir.getFileName().toString())) {
+                    if (shouldSkipDirectory(dir)) {
                         return FileVisitResult.SKIP_SUBTREE;
                     }
                     return FileVisitResult.CONTINUE;
@@ -93,8 +103,7 @@ public class ChunkerRegistry {
 
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    String ext = getExtension(file);
-                    if (EXTENSION_TO_TYPE.containsKey(ext)) {
+                    if (isIndexableFile(file)) {
                         allChunks.addAll(chunkFile(file));
                     }
                     return FileVisitResult.CONTINUE;

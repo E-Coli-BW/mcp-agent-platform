@@ -1,37 +1,44 @@
 package com.example.agent.tools;
 
-import com.example.agent.rag.HybridRetriever;
 import com.example.agent.rag.SearchResult;
+import com.example.agent.workspace.WorkspaceResolver;
+import com.example.mcp.common.security.TenantContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.function.Function;
 
 /**
- * RAG search tool backed by the hybrid retriever.
+ * Exposes tenant-scoped RAG search over the active workspace.
  */
 @Configuration
 public class RagSearchTool {
 
-    private final HybridRetriever retriever;
+    private final WorkspaceIndexRegistry indexRegistry;
+    private final WorkspaceResolver workspaceResolver;
 
-    public RagSearchTool(HybridRetriever retriever) {
-        this.retriever = retriever;
+    public RagSearchTool(
+            WorkspaceIndexRegistry indexRegistry,
+            WorkspaceResolver workspaceResolver) {
+        this.indexRegistry = indexRegistry;
+        this.workspaceResolver = workspaceResolver;
     }
 
-    /**
-     * Exposes the rag_search function callback.
-     */
     @Bean
     public Function<RagSearchRequest, String> rag_search() {
         return request -> {
-            if (!retriever.hasIndex()) {
-                return "No RAG index found for this workspace. Use file_search instead.";
-            }
+            String tenantId = TenantContext.get();
+            Path workspace = workspaceResolver.forTenant(tenantId);
             int topK = request.topK() != null ? request.topK() : 5;
-            List<SearchResult> results = retriever.search(request.query(), topK).block();
-            if (results == null || results.isEmpty()) {
+            WorkspaceIndexRegistry.SearchOutcome outcome = indexRegistry.search(
+                    tenantId, workspace, request.query(), topK);
+            if (outcome.unavailableMessage() != null) {
+                return outcome.unavailableMessage();
+            }
+            List<SearchResult> results = outcome.results();
+            if (results.isEmpty()) {
                 return "No relevant code found for: " + request.query();
             }
             StringBuilder builder = new StringBuilder();
@@ -44,7 +51,8 @@ public class RagSearchTool {
                         .append(" (")
                         .append(String.format("%.2f", result.score()))
                         .append(")\n")
-                        .append(result.chunk().content(), 0, Math.min(200, result.chunk().content().length()))
+                        .append(result.chunk().content(), 0,
+                                Math.min(200, result.chunk().content().length()))
                         .append("\n\n");
             }
             return builder.toString();
