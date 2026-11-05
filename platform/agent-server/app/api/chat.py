@@ -12,7 +12,11 @@ from app.agent.intent import get_meta_answer, is_meta_question
 from app.api import openai_sse
 from app.api.chat_models import ActiveFileContext, ChatMessage, ChatRequest
 from app.auth.middleware import AuthContext, require_auth, tenant_context
-from app.context.request_context import set_prompt_version, set_request_context
+from app.context.request_context import (
+    get_request_context,
+    set_prompt_version,
+    set_request_context,
+)
 from app.runtime.chat_stream import stream_agent_response as _stream_agent_response
 from app.store.conversation import Message, get_conversation_store
 
@@ -65,6 +69,7 @@ async def chat_completions(
         workspace_root=workspace_root,
     )
     set_prompt_version(request.prompt_version or "")
+    stream_request_context = get_request_context()
 
     from app.agent.delegation.governance import init_root_context
     from app.registry.tool_registry import get_registered_tools
@@ -140,6 +145,8 @@ async def chat_completions(
         max_tokens=request.max_tokens,
         prompt_version=request.prompt_version,
         http_request=raw_request,
+        auth_context=auth,
+        request_context=stream_request_context,
     )
     if request.stream:
         return EventSourceResponse(

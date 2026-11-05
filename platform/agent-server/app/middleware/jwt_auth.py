@@ -232,6 +232,8 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
         from app.auth.middleware import (
             auth_context_from_payload,
             cache_verified_auth_context,
+            reset_active_auth_context,
+            set_active_auth_context,
             tenant_context,
         )
 
@@ -245,7 +247,9 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
         request.state.tenant_id = auth_context.tenant_id
         request.state.jwt_subject = auth_context.user_id
         tenant_token = tenant_context.set(auth_context.tenant_id)
+        auth_token = set_active_auth_context(auth_context)
         try:
             return await call_next(request)
         finally:
+            reset_active_auth_context(auth_token)
             tenant_context.reset(tenant_token)

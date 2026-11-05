@@ -78,7 +78,7 @@ class McpToolClient:
             "tenant_id": resolved_tenant,
             "iat": int(now),
             "exp": int(now) + 3600,
-            "roles": ["SERVICE"],
+            "roles": ["ROLE_SERVICE"],
         }
         payload = base64.urlsafe_b64encode(
             json.dumps(payload_data).encode()

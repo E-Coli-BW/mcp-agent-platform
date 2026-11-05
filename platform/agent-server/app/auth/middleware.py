@@ -4,8 +4,8 @@ Fetches JWKS from auth-service, verifies RS256 signatures, extracts tenant conte
 """
 
 import logging
-from contextvars import ContextVar
-from dataclasses import dataclass
+from contextvars import ContextVar, Token
+from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Request
 
@@ -24,6 +24,22 @@ class AuthContext:
     user_id: str
     tenant_id: str
     permissions: list[str]
+    roles: list[str] = field(default_factory=list)
+
+
+active_auth_context = ContextVar("active_auth_context", default=None)
+
+
+def set_active_auth_context(context: AuthContext) -> Token:
+    return active_auth_context.set(context)
+
+
+def reset_active_auth_context(token: Token) -> None:
+    active_auth_context.reset(token)
+
+
+def get_active_auth_context() -> AuthContext | None:
+    return active_auth_context.get()
 
 
 def cache_verified_auth_context(request: Request, context: AuthContext) -> None:
@@ -37,16 +53,20 @@ def auth_context_from_payload(payload: dict) -> AuthContext | None:
     user_id = payload.get("sub")
     tenant_id = payload.get("tenant_id")
     permissions = payload.get("permissions") or []
+    roles = payload.get("roles") or []
     if not isinstance(user_id, str) or not user_id:
         return None
     if not isinstance(tenant_id, str) or not tenant_id:
         return None
     if not isinstance(permissions, list):
         return None
+    if not isinstance(roles, list):
+        return None
     return AuthContext(
         user_id=user_id,
         tenant_id=tenant_id,
         permissions=[str(permission) for permission in permissions],
+        roles=[str(role) for role in roles],
     )
 
 
@@ -62,6 +82,7 @@ async def require_auth(request: Request) -> AuthContext:
     verified = getattr(request_state, "auth_context", None)
     marker = getattr(request_state, "_verified_auth_context_marker", None)
     if isinstance(verified, AuthContext) and marker is _VERIFIED_CONTEXT_MARKER:
+        active_auth_context.set(verified)
         tenant_context.set(verified.tenant_id)
         return verified
 
@@ -89,5 +110,6 @@ async def require_auth(request: Request) -> AuthContext:
         )
     if request_state is not None:
         cache_verified_auth_context(request, context)
+    active_auth_context.set(context)
     tenant_context.set(context.tenant_id)
     return context

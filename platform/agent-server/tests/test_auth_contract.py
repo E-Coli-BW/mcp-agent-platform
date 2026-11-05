@@ -51,6 +51,7 @@ class TestJwtGeneration:
 
         assert payload["tenant_id"] == "my-tenant"
         assert payload["sub"] == "agent-server"
+        assert payload["roles"] == ["ROLE_SERVICE"]
         assert "exp" in payload
         assert "iat" in payload
 
