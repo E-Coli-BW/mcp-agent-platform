@@ -9,10 +9,13 @@
  */
 package com.example.memoryserver;
 
+import com.example.memorystore.config.MemoryStoreAutoConfig;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Import;
 
 @SpringBootApplication(scanBasePackages = {"com.example.memoryserver", "com.example.mcp.common"})
+@Import(MemoryStoreAutoConfig.class)
 public class MemoryServerHttpApplication {
 
     public static void main(String[] args) {

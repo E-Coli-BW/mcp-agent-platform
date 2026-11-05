@@ -6,22 +6,24 @@ on:
     paths:
       - 'platform/**'
       - 'src/**'
+      - 'tools/**'
+      - 'scripts/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'
       - 'Makefile'
-      - 'scripts/pre-commit'
       - '.github/workflows/**'
   pull_request:
     branches: [master, main]
     paths:
       - 'platform/**'
       - 'src/**'
+      - 'tools/**'
+      - 'scripts/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'
       - 'Makefile'
-      - 'scripts/pre-commit'
       - '.github/workflows/**'
 
 jobs:
@@ -69,6 +71,12 @@ jobs:
       - name: Run Java tests
         run: make test-java
 
+      - name: Java production wiring contracts
+        run: make test-java-wiring
+
+      - name: Java executable entrypoints
+        run: make test-java-entrypoints
+
   python-tests:
     name: Python Tests
     runs-on: ubuntu-latest
@@ -84,13 +92,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ hashFiles('platform/agent-server/pyproject.toml') }}
+          key: pip-${{ hashFiles('platform/agent-server/pyproject.toml', 'platform/agent-sdk/pyproject.toml', 'platform/eval-harness/pyproject.toml') }}
 
       - name: Install dependencies
         run: |
           cd platform/agent-server
           python -m venv .venv
-          .venv/bin/pip install -e '.[dev,rag]' -q
+          .venv/bin/pip install -e '.[dev,rag]' -e '../agent-sdk[dev]' -e ../eval-harness -q
 
       - name: Context State Contract
         run: make test-python-contract
@@ -98,10 +106,11 @@ jobs:
       - name: Agent Runtime Contract
         run: make test-agent-runtime-contract
 
-      - name: Run Python tests
-        run: |
-          cd platform/agent-server
-          .venv/bin/python -m pytest tests/ -q --tb=short
+      - name: Production Wiring Contracts
+        run: make test-python-wiring
+
+      - name: Run Python project tests
+        run: make test-python
 
   typescript-tests:
     name: TypeScript & Frontend Tests
@@ -126,6 +135,9 @@ jobs:
       - name: Build and test MCP servers
         run: make test-typescript
 
+      - name: Entrypoint process contracts
+        run: make test-typescript-entrypoints
+
       - name: Build frontend
         run: make test-frontend
 
@@ -134,4 +146,4 @@ jobs:
     needs: [java-tests, python-tests, typescript-tests]
     runs-on: ubuntu-latest
     steps:
-      - run: echo "✅ All tests passed — Java + Python + TypeScript + Frontend"
+      - run: echo "✅ All deterministic module and wiring tests passed"

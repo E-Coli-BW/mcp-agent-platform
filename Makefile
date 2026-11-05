@@ -6,6 +6,8 @@
 #   make test-python   — run Python tests only
 #   make test-typescript — build and test TypeScript MCP servers
 #   make test-frontend — type-check and build the React IDE
+#   make test-wiring    — run production-composition assurance contracts
+#   make test-entrypoints — build and handshake advertised MCP entrypoints
 #   make test-python-contract — run context state/model-view contract gate
 #   make test-agent-runtime-contract — run approval/cache/error runtime contracts
 #   make build         — build all modules
@@ -20,7 +22,7 @@
 #   - Python 3.12+ with venv at platform/agent-server/.venv
 #   - Node.js 18+ (for TypeScript MCP servers)
 
-.PHONY: test test-java test-python test-typescript test-frontend test-python-contract test-agent-runtime-contract test-integration build verify install-hooks clean docker-up docker-up-full docker-down
+.PHONY: test test-java test-python test-agent-server test-agent-sdk test-eval-harness test-typescript test-frontend test-wiring test-python-wiring test-java-wiring test-entrypoints test-typescript-entrypoints test-java-entrypoints test-python-contract test-agent-runtime-contract test-integration build verify install-hooks clean docker-up docker-up-full docker-down
 
 SHELL := /bin/bash
 
@@ -29,9 +31,16 @@ ROOT          := $(shell pwd)
 MEMORY_SERVER := platform/memory-server
 AUTH_SERVICE  := platform/auth-service
 AGENT_SERVER  := platform/agent-server
+AGENT_SDK     := platform/agent-sdk
 AGENT_JAVA    := platform/agent-server-java
+CODEEXEC      := platform/codeexec-server
+COMPLETION    := platform/completion-server
+FILESEARCH    := platform/filesearch-server
 MCP_COMMON    := platform/mcp-common
 COMMON_SPI    := platform/common-spi
+MODEL_ROUTER  := platform/model-router
+REVIEW_AGENT  := platform/review-agent
+EVAL_HARNESS  := platform/eval-harness
 MCP_CLI       := platform/mcp-cli
 FRONTEND      := platform/frontend
 
@@ -53,11 +62,11 @@ PYTHON := $(ROOT)/$(AGENT_SERVER)/.venv/bin/python
 build: build-java build-python  ## Build all modules
 	@echo "✅ All modules built"
 
-build-java: build-common  ## Build Java modules
-	@echo "📦 Building memory-server..."
-	@cd $(MEMORY_SERVER) && $(MVN) package $(MVN_OPTS) -DskipTests
-	@echo "📦 Building agent-server-java..."
-	@cd $(AGENT_JAVA) && $(MVN) package $(MVN_OPTS) -DskipTests
+build-java: build-common  ## Build every Java service
+	@for module in $(MEMORY_SERVER) $(AUTH_SERVICE) $(AGENT_JAVA) $(CODEEXEC) $(COMPLETION) $(FILESEARCH) $(MODEL_ROUTER) $(REVIEW_AGENT); do \
+		echo "📦 Building $$module..."; \
+		(cd $$module && $(MVN) package $(MVN_OPTS) -DskipTests) || exit 1; \
+	done
 
 build-common:  ## Build shared Java modules (mcp-common, common-spi)
 	@echo "📦 Building mcp-common..."
@@ -73,35 +82,78 @@ build-python:  ## Verify Python dependencies
 
 # ── Test ──────────────────────────────────────────────────────
 
-test: test-java test-python test-typescript test-frontend  ## Run ALL tests
+test: test-java test-python test-typescript test-frontend test-entrypoints  ## Run ALL deterministic tests and process smokes
 	@echo ""
 	@echo "═══════════════════════════════════════════"
 	@echo "✅ ALL TESTS PASSED (Java + Python + TypeScript + Frontend)"
 	@echo "═══════════════════════════════════════════"
 
-test-java: build-common  ## Run Java tests (rebuilds mcp-common first!)
-	@echo ""
-	@echo "🧪 Running Java tests (memory-server)..."
-	@cd $(MEMORY_SERVER) && $(MVN) test $(MVN_OPTS) -q
-	@echo "  ✓ memory-server tests passed"
-	@echo "🧪 Running Java tests (auth-service)..."
-	@cd $(AUTH_SERVICE) && $(MVN) test $(MVN_OPTS) -q
-	@echo "  ✓ auth-service tests passed"
-	@echo "🧪 Running Java tests (agent-server-java)..."
-	@cd $(AGENT_JAVA) && $(MVN) test $(MVN_OPTS) -q
-	@echo "  ✓ agent-server-java tests passed"
+test-java: build-common  ## Run every Java module's deterministic tests
+	@for module in $(MCP_COMMON) $(COMMON_SPI) $(MEMORY_SERVER) $(AUTH_SERVICE) $(AGENT_JAVA) $(CODEEXEC) $(COMPLETION) $(FILESEARCH) $(MODEL_ROUTER) $(REVIEW_AGENT); do \
+		echo "🧪 Running Java tests ($$module)..."; \
+		(cd $$module && $(MVN) test $(MVN_OPTS) -q) || exit 1; \
+	done
+	@echo "  ✓ All Java module tests passed"
 
-test-python:  ## Run Python tests
-	@echo ""
-	@echo "🧪 Running Python tests..."
+test-python: test-agent-server test-agent-sdk test-eval-harness  ## Run every Python project's deterministic tests
+	@echo "  ✓ All Python project tests passed"
+
+test-agent-server:  ## Run Python Agent Server tests
+	@echo "🧪 Running Agent Server tests..."
 	@cd $(AGENT_SERVER) && $(PYTHON) -m pytest tests/ -q --tb=short
-	@echo "  ✓ Python tests passed"
+
+test-agent-sdk:  ## Run Python Agent SDK tests
+	@echo "🧪 Running Agent SDK tests..."
+	@cd $(AGENT_SDK) && $(PYTHON) -m pytest tests/ -q --tb=short
+
+test-eval-harness:  ## Run deterministic eval tests and coding preflight
+	@echo "🧪 Running eval harness tests..."
+	@cd $(EVAL_HARNESS) && $(PYTHON) -m pytest tests/ -q --tb=short
+	@output_dir=$$(mktemp -d); trap 'rm -rf "$$output_dir"' EXIT; \
+		cd $(EVAL_HARNESS) && $(PYTHON) -m eval.coding_e2e \
+			--preflight-only --output "$$output_dir"
 
 test-typescript:  ## Build and test TypeScript MCP servers
 	@echo ""
 	@echo "🧪 Running TypeScript MCP tests..."
 	@cd $(MCP_CLI) && npm test
 	@echo "  ✓ TypeScript MCP tests passed"
+
+test-typescript-entrypoints:  ## Build and initialize every advertised MCP CLI entrypoint
+	@echo "🔌 Running MCP entrypoint process contracts..."
+	@cd $(MCP_CLI) && npm run build && npm run test:architecture && npm run test:entrypoints
+
+test-java-entrypoints: build-java  ## Package, start, and health-check every Spring Boot application
+	@echo "🔌 Running Java executable-jar contracts..."
+	@python3 scripts/java-entrypoint-contract.py
+	@python3 scripts/java-entrypoint-smoke.py
+
+test-entrypoints: test-typescript-entrypoints test-java-entrypoints  ## Run all package and process entrypoint contracts
+
+test-python-wiring:  ## Run focused Python production-composition contracts
+	@echo "🔒 Running Python production wiring contracts..."
+	@$(PYTHON) -m ruff check \
+		$(AGENT_SDK)/agent_sdk/knowledge.py \
+		$(AGENT_SDK)/agent_sdk/memory.py \
+		$(AGENT_SDK)/tests/test_clients.py \
+		$(AGENT_SERVER)/app/plugins/loader.py \
+		$(AGENT_SERVER)/app/registry/config_loader.py \
+		$(AGENT_SERVER)/app/tools/rag_tool.py \
+		$(AGENT_SERVER)/tests/test_plugin_wiring.py \
+		$(AGENT_SERVER)/tests/test_config_liveness.py
+	@cd $(AGENT_SDK) && $(PYTHON) -m pytest tests/test_clients.py -q --tb=short
+	@cd $(AGENT_SERVER) && $(PYTHON) -m pytest \
+		tests/test_plugin_wiring.py tests/test_config_liveness.py -q --tb=short
+
+test-java-wiring: build-common  ## Run focused Java production-composition contracts
+	@echo "🔒 Running Java production wiring contracts..."
+	@cd $(AGENT_JAVA) && $(MVN) test $(MVN_OPTS) -q \
+		-Dtest=AgentLoopTimeoutTest,RagIndexerTest,RagSearchToolTest,AgentConfigurationContractTest
+	@cd $(MEMORY_SERVER) && $(MVN) test $(MVN_OPTS) -q \
+		-Dtest=MemoryStoreProductionCompositionTest
+
+test-wiring: test-python-wiring test-java-wiring  ## Run all production-composition assurance contracts
+	@echo "  ✓ Production wiring contracts passed"
 
 test-frontend:  ## Type-check and build the React IDE
 	@echo ""
@@ -149,7 +201,7 @@ test-agent-runtime-contract:  ## Enforce approval, cache isolation, and tool err
 
 # ── Verify (pre-commit) ──────────────────────────────────────
 
-verify: build test-python-contract test-agent-runtime-contract test  ## Full build + test validation (use before committing)
+verify: build test-python-contract test-agent-runtime-contract test-wiring test  ## Full build + test validation (use before committing)
 	@echo ""
 	@echo "═══════════════════════════════════════════"
 	@echo "✅ VERIFICATION PASSED — safe to commit"
