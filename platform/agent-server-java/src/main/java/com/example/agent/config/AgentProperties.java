@@ -8,8 +8,6 @@ import org.springframework.context.annotation.Configuration;
 public class AgentProperties {
 
     private String defaultModel = "qwen2.5:7b";
-    private String strongModel = "qwen2.5:7b";
-    private String cheapModel = "qwen2.5:7b";
     private String promptVersion = "v2";
     private String promptTenantVersionsJson = "{}";
     private boolean promptCanaryEnabled = false;
@@ -17,7 +15,6 @@ public class AgentProperties {
     private String promptCanaryVersion = "";
     private String promptCanaryTenants = "";
     private boolean promptAllowRequestOverride = false;
-    private String configDir = "agents";
     private int maxToolOutput = 3000;
     private int maxContextChars = 20000;
     private int maxAgentSteps = 20;
@@ -34,31 +31,8 @@ public class AgentProperties {
     public AgentProperties() {
     }
 
-    public AgentProperties(String defaultModel, String strongModel, String cheapModel, String promptVersion,
-                           String configDir, int maxToolOutput, int maxContextChars, int maxAgentSteps,
-                           String workspace, String jwtSecret, String memoryServerUrl,
-                           String codeexecServerUrl, String authServiceUrl) {
-        this.defaultModel = defaultModel;
-        this.strongModel = strongModel;
-        this.cheapModel = cheapModel;
-        this.promptVersion = promptVersion;
-        this.configDir = configDir;
-        this.maxToolOutput = maxToolOutput;
-        this.maxContextChars = maxContextChars;
-        this.maxAgentSteps = maxAgentSteps;
-        this.workspace = workspace;
-        this.jwtSecret = jwtSecret;
-        this.memoryServerUrl = memoryServerUrl;
-        this.codeexecServerUrl = codeexecServerUrl;
-        this.authServiceUrl = authServiceUrl;
-    }
-
     public String defaultModel() { return defaultModel; }
     public void setDefaultModel(String defaultModel) { this.defaultModel = hasText(defaultModel) ? defaultModel : this.defaultModel; }
-    public String strongModel() { return strongModel; }
-    public void setStrongModel(String strongModel) { this.strongModel = hasText(strongModel) ? strongModel : defaultModel; }
-    public String cheapModel() { return cheapModel; }
-    public void setCheapModel(String cheapModel) { this.cheapModel = hasText(cheapModel) ? cheapModel : defaultModel; }
     public String promptVersion() { return promptVersion; }
     public void setPromptVersion(String promptVersion) { this.promptVersion = hasText(promptVersion) ? promptVersion : this.promptVersion; }
     public String promptTenantVersionsJson() { return promptTenantVersionsJson; }
@@ -73,8 +47,6 @@ public class AgentProperties {
     public void setPromptCanaryTenants(String promptCanaryTenants) { this.promptCanaryTenants = promptCanaryTenants != null ? promptCanaryTenants : ""; }
     public boolean promptAllowRequestOverride() { return promptAllowRequestOverride; }
     public void setPromptAllowRequestOverride(boolean promptAllowRequestOverride) { this.promptAllowRequestOverride = promptAllowRequestOverride; }
-    public String configDir() { return configDir; }
-    public void setConfigDir(String configDir) { this.configDir = hasText(configDir) ? configDir : this.configDir; }
     public int maxToolOutput() { return maxToolOutput; }
     public void setMaxToolOutput(int maxToolOutput) { this.maxToolOutput = maxToolOutput > 0 ? maxToolOutput : this.maxToolOutput; }
     public int maxContextChars() { return maxContextChars; }

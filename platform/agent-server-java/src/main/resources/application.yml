@@ -3,8 +3,6 @@ server:
 
 agent:
   default-model: mlx/Qwen2.5-0.5B-Instruct-4bit
-  strong-model: qwen2.5:7b
-  cheap-model: mlx/Qwen2.5-0.5B-Instruct-4bit
   prompt-version: v2
   prompt-tenant-versions-json: ${AGENT_PROMPT_TENANT_VERSIONS_JSON:{}}
   prompt-canary-enabled: ${AGENT_PROMPT_CANARY_ENABLED:false}
@@ -12,7 +10,6 @@ agent:
   prompt-canary-version: ${AGENT_PROMPT_CANARY_VERSION:}
   prompt-canary-tenants: ${AGENT_PROMPT_CANARY_TENANTS:}
   prompt-allow-request-override: ${AGENT_PROMPT_ALLOW_REQUEST_OVERRIDE:false}
-  config-dir: agents
   max-tool-output: 3000
   max-context-chars: 20000
   max-agent-steps: 20

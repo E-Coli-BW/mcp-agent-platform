@@ -132,7 +132,6 @@ def start_agent(
         {
             "AGENT_PORT": str(port),
             "AGENT_DEFAULT_MODEL": "mlx/retry-test",
-            "AGENT_STRONG_MODEL": "mlx/retry-test",
             "AGENT_CHEAP_MODEL": "mlx/retry-test",
             "AGENT_MLX_BASE_URL": f"http://127.0.0.1:{provider_port}",
             "AGENT_AGENT_CONFIG_DIR": str(config_dir),

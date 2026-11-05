@@ -25,7 +25,6 @@ class Settings(BaseSettings):
 
     # LLM
     default_model: str = "qwen2.5:7b"
-    strong_model: str = "qwen2.5:7b"
     cheap_model: str = "mlx/Qwen2.5-0.5B-Instruct-4bit"
     llm_timeout: int = 60
     max_agent_steps: int = 20

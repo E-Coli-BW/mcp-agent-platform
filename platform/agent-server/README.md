@@ -94,7 +94,7 @@ in the project root. Settings are defined in `app/config.py` as a Pydantic model
 1. Environment variables       AGENT_DEFAULT_MODEL=qwen2.5:7b
 2. .env file                   platform/agent-server/.env
 3. Agent YAML config           agents/coding-agent.yaml (model field)
-4. config.py defaults          cheap_model: str = "qwen2.5:7b"
+4. config.py defaults          default_model: str = "qwen2.5:7b"
 ```
 
 > ⚠️ **Key gotcha**: The `model` field in `agents/coding-agent.yaml` overrides
@@ -103,20 +103,24 @@ in the project root. Settings are defined in `app/config.py` as a Pydantic model
 
 ### Model Strategy — What Goes Where
 
-The platform has THREE model roles with different requirements:
+The runtime has one configured main-agent model and a configurable auxiliary
+model used by selected features:
 
 | Role | Config Key | Requirements | Good Default |
 |------|-----------|--------------|--------------|
 | **Main agent** | `default_model` / YAML `model:` | Tool calling, structured JSON | `qwen2.5:7b` (Ollama) |
-| **Strong model** | `strong_model` | Complex reasoning | `openai/gpt-4o` or `qwen2.5:7b` |
 | **Cheap model** | `cheap_model` | Fast text→text only | `mlx/Qwen2.5-0.5B-Instruct-4bit` |
 
-**Why the split?** The main agent needs reliable tool calling (function schemas,
-structured arguments). Model size alone does not establish that capability;
-validate the selected model/provider against the project's tool-call cases.
-Auxiliary tasks such as grading and reranking can use a smaller model when
-task-specific evaluations justify the quality/latency trade-off. Model-based
-self-checks are not an independent correctness oracle.
+`strong_model` is not a supported setting. Auxiliary features may also override
+`cheap_model` with their feature-specific settings, such as
+`reflexion_model`, `rerank_llm_model`, and `subagent_verifier_model`.
+
+The main agent needs reliable tool calling (function schemas, structured
+arguments). Model size alone does not establish that capability; validate the
+selected model/provider against the project's tool-call cases. Smaller models
+can reduce auxiliary-task cost, but task-specific evaluations must justify the
+quality/latency trade-off. Model-based self-checks are not an independent
+correctness oracle.
 
 ### Feature Dependencies — Which Features Use Which Model
 
@@ -182,7 +186,6 @@ with the warm-cache benchmark rather than assuming a larger window is faster.
 **Cloud production:**
 ```env
 AGENT_DEFAULT_MODEL=openai/gpt-4o
-AGENT_STRONG_MODEL=openai/gpt-4o
 AGENT_CHEAP_MODEL=openai/gpt-4o-mini
 AGENT_REFLEXION_ENABLED=true
 AGENT_RERANK_STRATEGY=llm
@@ -193,7 +196,6 @@ AGENT_RERANK_STRATEGY=llm
 | Variable | Default | Description |
 |---|---|---|
 | `AGENT_DEFAULT_MODEL` | `qwen2.5:7b` | Main agent model (must support tool calling) |
-| `AGENT_STRONG_MODEL` | `qwen2.5:7b` | Complex reasoning model |
 | `AGENT_CHEAP_MODEL` | `mlx/Qwen2.5-0.5B-Instruct-4bit` | Fast auxiliary model (grading, reranking) |
 | `AGENT_MLX_BASE_URL` | `http://localhost:8600` | MLX server URL (for `mlx/` models) |
 | `AGENT_MLX_ENABLE_THINKING` | _(unset)_ | Optional `enable_thinking` request override for MLX models |

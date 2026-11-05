@@ -4,6 +4,12 @@
 > **Language:** Python (FastAPI + LangGraph)
 > **Connects to:** Java MCP tool backends (memory:8180, filesearch:8280, codeexec:8380)
 > **Goal:** OpenAI-compatible coding agent with RAG, streaming, and tool use
+>
+> **Implementation note (2026-11-05):** This document contains a proposed
+> architecture, not a source-of-truth description of the current runtime. The
+> current Python settings no longer expose `strong_model` or task-based strong
+> model routing. The supported main model is `default_model`; auxiliary model
+> selection uses `cheap_model` and feature-specific settings.
 
 ---
 
@@ -195,7 +201,7 @@ class ModelRouter:
         if task_type == "classify" or task_type == "summarize":
             return self.cheap_model    # GPT-4o-mini or local Ollama
         if task_type == "code_generate":
-            return self.strong_model   # Claude Sonnet or GPT-4o
+            return self.default_model  # Main model; no separate strong tier
         if task_type == "explain":
             return self.medium_model   # whatever's available
         return self.default_model

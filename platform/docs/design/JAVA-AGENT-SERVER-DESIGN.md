@@ -5,6 +5,15 @@
 >
 > **Module**: `platform/agent-server-java/` (new Spring Boot module)
 > **Port**: 8500 (same as Python, swap by stopping one and starting the other)
+>
+> **Implementation note (2026-11-05):** This is the original target-design
+> snapshot, not the current Java source inventory. The current Java service no
+> longer loads `agents/*.yaml` or hot-reloads them; `AgentConfig`,
+> `AgentConfigLoader`, `ConfigWatcher`, and the `config-dir`, `strong-model`,
+> and `cheap-model` properties have been retired. Runtime model selection uses
+> `agent.default-model` and Spring AI provider configuration. Treat the tree,
+> YAML example, effort estimate, and file plan below as historical design
+> material unless reconciled with the current source.
 
 ---
 
