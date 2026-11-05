@@ -179,7 +179,11 @@ def _parse_critic_response(raw: str) -> tuple[int, str] | None:
 
 
 # ── The node ───────────────────────────────────────────────────────────────
-def make_maybe_critique_node(critic_model: BaseChatModel | None = None):
+def make_maybe_critique_node(
+    critic_model: BaseChatModel | None = None,
+    *,
+    enabled: bool | None = None,
+):
     """Factory returning a LangGraph node that may inject a revision request.
 
     Returns a coroutine fn that takes AgentState and returns a dict patch
@@ -217,7 +221,8 @@ def make_maybe_critique_node(critic_model: BaseChatModel | None = None):
         return _critic_cache[name]
 
     async def maybe_critique(state) -> dict[str, Any]:
-        if not settings.reflexion_enabled:
+        reflexion_enabled = settings.reflexion_enabled if enabled is None else enabled
+        if not reflexion_enabled:
             return {}
 
         attempts = getattr(state, "critique_attempts", 0)

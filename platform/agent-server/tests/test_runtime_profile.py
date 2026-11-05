@@ -64,6 +64,7 @@ def test_configured_agent_removes_subagent_tool_when_profile_disallows_it(monkey
             "allow_subagents": False,
             "max_context_chars": 60_000,
             "direct_tool_routing_enabled": True,
+            "verification_enabled": True,
         },
     )
 
@@ -84,3 +85,4 @@ def test_configured_agent_removes_subagent_tool_when_profile_disallows_it(monkey
     assert captured["max_steps"] == 8
     assert captured["max_context_chars"] == 60_000
     assert captured["direct_tool_routing_enabled"] is True
+    assert captured["verification_enabled"] is True

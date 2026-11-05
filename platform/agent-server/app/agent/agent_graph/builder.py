@@ -44,6 +44,7 @@ def build_agent_graph(
     max_steps: int | None = None,
     max_context_chars: int | None = None,
     direct_tool_routing_enabled: bool | None = None,
+    verification_enabled: bool | None = None,
 ):
     """Build and compile the explicit v2 ReAct topology."""
     resolved_max_steps = max_steps or settings.max_agent_steps
@@ -75,7 +76,10 @@ def build_agent_graph(
             max_tool_calls=resolved_max_steps,
         ),
     )
-    graph.add_node("maybe_critique", make_maybe_critique_node())
+    graph.add_node(
+        "maybe_critique",
+        make_maybe_critique_node(enabled=verification_enabled),
+    )
     graph.add_node(
         "tools",
         ToolNode(execution_tools, handle_tool_errors=_format_tool_error),

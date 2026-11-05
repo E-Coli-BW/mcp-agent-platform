@@ -47,4 +47,5 @@ def create_agent_v2_from_config(config, temperature: float | None = None):
         max_steps=runtime_profile.max_tool_calls,
         max_context_chars=runtime_profile.max_context_chars,
         direct_tool_routing_enabled=runtime_profile.direct_tool_routing_enabled,
+        verification_enabled=runtime_profile.verification_enabled,
     )

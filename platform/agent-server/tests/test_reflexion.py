@@ -144,6 +144,34 @@ def _state_with_answer(answer_text: str, attempts: int = 0) -> AgentState:
 class TestMaybeCritiqueNode:
 
     @pytest.mark.asyncio
+    async def test_profile_can_enable_reflexion_when_global_default_is_off(
+        self,
+        monkeypatch,
+    ):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "reflexion_enabled", False)
+        critic = AsyncMock(return_value=AIMessage(content='{"grade":5,"reasoning":"ok"}'))
+        node = make_maybe_critique_node(critic_model=critic, enabled=True)
+
+        assert await node(_state_with_answer("answer")) == {}
+        critic.ainvoke.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_profile_can_disable_reflexion_when_global_default_is_on(
+        self,
+        monkeypatch,
+    ):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "reflexion_enabled", True)
+        critic = AsyncMock()
+        node = make_maybe_critique_node(critic_model=critic, enabled=False)
+
+        assert await node(_state_with_answer("answer")) == {}
+        critic.ainvoke.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_should_noop_when_reflexionDisabled(self, monkeypatch):
         """Default off → node returns {} regardless of state. This is
         the back-compat property — adding reflexion to the graph must
