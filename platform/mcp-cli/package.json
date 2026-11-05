@@ -2,13 +2,14 @@
   "name": "mcp-local-tools",
   "version": "1.0.0",
   "type": "module",
-  "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test memory/__tests__/*.test.mjs",
+    "test": "npm run build && node --test memory/__tests__/*.test.mjs && npm run test:architecture && npm run test:entrypoints",
+    "test:architecture": "node architecture-contract.mjs",
+    "test:entrypoints": "node entrypoint-smoke.mjs",
     "watch": "tsc --watch",
-    "start:memory": "node dist/memory-ts/memory-server.js",
-    "start:filesearch": "node dist/filesearch-ts/filesearch-server.js"
+    "start:memory": "node dist/memory-server.js",
+    "start:filesearch": "node dist/filesearch/filesearch-server.js"
   },
   "keywords": ["mcp", "memory", "file-search"],
   "author": "",

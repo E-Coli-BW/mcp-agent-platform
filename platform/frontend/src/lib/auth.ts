@@ -26,18 +26,6 @@ const state: AuthState = {
   roles: [],
 };
 
-// Notify listeners on auth state change
-type AuthListener = (state: AuthState | null) => void;
-const listeners: AuthListener[] = [];
-
-export function onAuthChange(fn: AuthListener) {
-  listeners.push(fn);
-}
-
-function notify(s: AuthState | null) {
-  listeners.forEach((fn) => fn(s));
-}
-
 /** Parse roles from JWT payload (display only, no verification) */
 function parseJwtRoles(token: string): string[] {
   try {
@@ -89,7 +77,6 @@ export async function login(
   // For session restore, the auth service should set an httpOnly cookie instead.
   // localStorage.setItem('auth_refresh', data.refresh_token);  // REMOVED — XSS risk
 
-  notify(state);
   return { tenant: data.tenant_id, roles: state.roles };
 }
 
@@ -135,7 +122,6 @@ export async function tryRefresh(): Promise<boolean> {
       accessToken = data.access_token;
       refreshTokenValue = data.refresh_token;
       state.roles = parseJwtRoles(data.access_token);
-      notify(state);
       return true;
     } catch {
       return false;
@@ -161,7 +147,6 @@ export async function logout(): Promise<void> {
   localStorage.removeItem('auth_user');
   localStorage.removeItem('auth_tenant');
   localStorage.removeItem('auth_refresh');
-  notify(null);
 
   if (tokenToRevoke) {
     try {

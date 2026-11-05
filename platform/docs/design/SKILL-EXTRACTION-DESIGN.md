@@ -9,7 +9,7 @@ Automatic skill extraction from tool call history, inspired by
 Two implementations are active:
 
 - **Option C** (prompt-only): `.github/copilot-instructions.md` tells the LLM to save skills
-- **Option A** (background worker): `tools/memory-ts/memory/skill-extractor.ts` auto-extracts skills
+- **Option A** (background worker): `platform/mcp-cli/memory/skill-extractor.ts` auto-extracts skills
 
 ---
 
@@ -88,7 +88,7 @@ memory_set(
 
 ### Option A: Background Worker (Automatic)
 
-Location: `tools/memory-ts/memory/skill-extractor.ts`
+Location: `platform/mcp-cli/memory/skill-extractor.ts`
 
 Key components:
 
@@ -195,8 +195,8 @@ Compared to Hermes:
 
 | File | Purpose |
 |------|---------|
-| `tools/memory-ts/memory/skill-extractor.ts` | ToolCallTracker, LLM review, skill storage |
-| `tools/memory-ts/memory-server.ts` | Universal wrapper, periodic timer |
+| `platform/mcp-cli/memory/skill-extractor.ts` | ToolCallTracker, LLM review, skill storage |
+| `platform/mcp-cli/memory-server.ts` | Universal wrapper, periodic timer |
 | `.github/copilot-instructions.md` | Option C prompt instructions |
 | `~/.mcp-local/memory-config.json` | User configuration |
 | `~/.mcp-local/memory-store.json` | Skill storage (namespace="skills") |

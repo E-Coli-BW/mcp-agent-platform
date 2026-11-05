@@ -1,9 +1,9 @@
 #!/bin/bash
 # Test: fire 12 MCP tool calls via stdio to trigger skill extraction (nudgeInterval=10)
 set -e
-cd "$(dirname "$0")/../.."  # go to repo root
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
-SERVER="node dist/memory-ts/memory-server.js"
+SERVER=(node "$SCRIPT_DIR/dist/memory-server.js")
 FIFO=$(mktemp -u)
 mkfifo "$FIFO"
 trap "rm -f $FIFO" EXIT
@@ -17,7 +17,7 @@ tool_call() {
 }
 
 # Start server with FIFO as stdin so we can control when it exits
-$SERVER < "$FIFO" > /dev/null 2> /tmp/skill-stderr.txt &
+"${SERVER[@]}" < "$FIFO" > /dev/null 2> /tmp/skill-stderr.txt &
 SERVER_PID=$!
 
 # Open FIFO for writing (keeps it open)
