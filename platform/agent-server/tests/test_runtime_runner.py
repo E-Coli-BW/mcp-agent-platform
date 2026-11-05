@@ -30,6 +30,9 @@ class FakeSessionLane:
     async def acquire(self, _session_id, max_wait, owner_token):
         return self.acquired
 
+    async def maintain(self, _session_id, _owner_token):
+        await asyncio.Event().wait()
+
     async def release(self, session_id, owner_token):
         self.released.append(session_id)
 
