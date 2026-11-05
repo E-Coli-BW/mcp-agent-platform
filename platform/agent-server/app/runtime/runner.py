@@ -71,6 +71,8 @@ class SessionLane(Protocol):
 
     async def release(self, session_id: str, owner_token: str) -> None: ...
 
+    async def maintain(self, session_id: str, owner_token: str) -> None: ...
+
 
 class DefaultSessionLane:
     async def is_held(self, session_id: str) -> bool:
@@ -91,6 +93,11 @@ class DefaultSessionLane:
         from app.middleware.session_lane import release_session_lock
 
         await release_session_lock(session_id, owner_token)
+
+    async def maintain(self, session_id: str, owner_token: str) -> None:
+        from app.middleware.session_lane import maintain_session_lock
+
+        await maintain_session_lock(session_id, owner_token)
 
 
 class RunCoordinator:
@@ -184,6 +191,7 @@ class RunCoordinator:
 
         full_response = ""
         lock_acquired = False
+        lock_renewal_task: asyncio.Task | None = None
         lock_owner_token = uuid4().hex
         client_disconnected = False
         cancel_requested = False
@@ -268,6 +276,11 @@ class RunCoordinator:
                 yield RuntimeStreamEvent("done")
                 return
             lock_acquired = True
+            maintain = getattr(self._session_lane, "maintain", None)
+            if maintain is not None:
+                lock_renewal_task = asyncio.create_task(
+                    maintain(request.session_id, lock_owner_token)
+                )
 
             fan_in = self._fan_in_factory(
                 agent_events=agent_events,
@@ -541,6 +554,12 @@ class RunCoordinator:
             )
             yield RuntimeStreamEvent("done")
         finally:
+            if lock_renewal_task is not None:
+                lock_renewal_task.cancel()
+                try:
+                    await lock_renewal_task
+                except asyncio.CancelledError:
+                    pass
             if lock_acquired:
                 await self._session_lane.release(
                     request.session_id, owner_token=lock_owner_token
