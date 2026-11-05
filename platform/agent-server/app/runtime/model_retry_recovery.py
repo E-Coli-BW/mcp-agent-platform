@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.messages import AIMessage
 
@@ -71,6 +72,7 @@ async def resume_model_retry_run(
 
         raise ModelRetryLeaseLostError("model retry resume requires an active lease owner")
     session_id = str(payload.get("session_id") or metadata["session_id"])
+    lock_owner_token = uuid4().hex
     model = str(metadata["model"])
     prompt_version = str(payload.get("prompt_version") or "")
     recorder = get_run_recorder()
@@ -90,7 +92,9 @@ async def resume_model_retry_run(
         allowed_tools=[name for name in get_registered_tools() if name != "spawn_subagent"],
     )
 
-    if not await wait_for_session_lock(session_id, max_wait=1):
+    if not await wait_for_session_lock(
+        session_id, owner_token=lock_owner_token, max_wait=1
+    ):
         raise ModelRetryReconciliationError(
             "another request currently owns the session lane"
         )
@@ -203,4 +207,4 @@ async def resume_model_retry_run(
         raise
     finally:
         await cancellation.unregister(run_id)
-        await release_session_lock(session_id)
+        await release_session_lock(session_id, lock_owner_token)

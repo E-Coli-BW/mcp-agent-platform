@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 # Shared Redis connection — lazy-initialized
 _redis = None
 
+_RELEASE_IF_OWNER_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+end
+return 0
+"""
+
 
 async def _get_redis():
     global _redis
@@ -27,9 +34,12 @@ async def _get_redis():
     return _redis
 
 
-async def acquire_session_lock(session_id: str, timeout: int = 900) -> bool:
+async def acquire_session_lock(
+    session_id: str, owner_token: str, timeout: int = 900
+) -> bool:
     """Try to acquire exclusive lock for a session.
 
+    The unique owner token is stored as the lock value for safe release.
     Returns True if acquired, False if already locked.
     Gracefully returns True if Redis is unavailable (no-op locking).
     """
@@ -38,21 +48,21 @@ async def acquire_session_lock(session_id: str, timeout: int = 900) -> bool:
         if r is None:
             return True
         key = f"session_lane:{session_id}"
-        result = await r.set(key, "1", nx=True, ex=timeout)
+        result = await r.set(key, owner_token, nx=True, ex=timeout)
         return bool(result)
     except Exception as e:
         logger.debug("Session lock unavailable (Redis): %s", e)
         return True
 
 
-async def release_session_lock(session_id: str) -> None:
-    """Release session lock. No-op if Redis is unavailable."""
+async def release_session_lock(session_id: str, owner_token: str) -> None:
+    """Release the session lock only if this caller still owns it."""
     try:
         r = await _get_redis()
         if r is None:
             return
         key = f"session_lane:{session_id}"
-        await r.delete(key)
+        await r.eval(_RELEASE_IF_OWNER_SCRIPT, 1, key, owner_token)
     except Exception as e:
         logger.debug("Session lock release failed (Redis): %s", e)
 
@@ -70,7 +80,10 @@ async def session_lock_held(session_id: str) -> bool:
 
 
 async def wait_for_session_lock(
-    session_id: str, poll_interval: float = 0.5, max_wait: float = 30
+    session_id: str,
+    owner_token: str,
+    poll_interval: float = 0.5,
+    max_wait: float = 30,
 ) -> bool:
     """Wait until session lock is available, then acquire it.
 
@@ -79,7 +92,7 @@ async def wait_for_session_lock(
     """
     elapsed = 0.0
     while elapsed < max_wait:
-        if await acquire_session_lock(session_id):
+        if await acquire_session_lock(session_id, owner_token=owner_token):
             return True
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval

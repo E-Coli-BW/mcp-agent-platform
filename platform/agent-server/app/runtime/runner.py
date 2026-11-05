@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import time
+from uuid import uuid4
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -64,9 +65,11 @@ class RuntimeTurnRequest:
 class SessionLane(Protocol):
     async def is_held(self, session_id: str) -> bool: ...
 
-    async def acquire(self, session_id: str, max_wait: float) -> bool: ...
+    async def acquire(
+        self, session_id: str, max_wait: float, owner_token: str
+    ) -> bool: ...
 
-    async def release(self, session_id: str) -> None: ...
+    async def release(self, session_id: str, owner_token: str) -> None: ...
 
 
 class DefaultSessionLane:
@@ -75,15 +78,19 @@ class DefaultSessionLane:
 
         return await session_lock_held(session_id)
 
-    async def acquire(self, session_id: str, max_wait: float) -> bool:
+    async def acquire(
+        self, session_id: str, max_wait: float, owner_token: str
+    ) -> bool:
         from app.middleware.session_lane import wait_for_session_lock
 
-        return await wait_for_session_lock(session_id, max_wait=max_wait)
+        return await wait_for_session_lock(
+            session_id, owner_token=owner_token, max_wait=max_wait
+        )
 
-    async def release(self, session_id: str) -> None:
+    async def release(self, session_id: str, owner_token: str) -> None:
         from app.middleware.session_lane import release_session_lock
 
-        await release_session_lock(session_id)
+        await release_session_lock(session_id, owner_token)
 
 
 class RunCoordinator:
@@ -177,6 +184,7 @@ class RunCoordinator:
 
         full_response = ""
         lock_acquired = False
+        lock_owner_token = uuid4().hex
         client_disconnected = False
         cancel_requested = False
         fan_in: AgentEventFanIn | None = None
@@ -231,7 +239,11 @@ class RunCoordinator:
                     },
                 )
 
-            if not await self._session_lane.acquire(request.session_id, max_wait=900):
+            if not await self._session_lane.acquire(
+                request.session_id,
+                max_wait=900,
+                owner_token=lock_owner_token,
+            ):
                 await self._recorder.finish_run(
                     request_context.run_id,
                     RunStatus.FAILED,
@@ -530,7 +542,9 @@ class RunCoordinator:
             yield RuntimeStreamEvent("done")
         finally:
             if lock_acquired:
-                await self._session_lane.release(request.session_id)
+                await self._session_lane.release(
+                    request.session_id, owner_token=lock_owner_token
+                )
             await self._cancellation.unregister(request_context.run_id)
 
     async def _next_event_or_cancel(

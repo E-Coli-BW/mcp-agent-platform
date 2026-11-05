@@ -27,10 +27,10 @@ class FakeSessionLane:
     async def is_held(self, _session_id):
         return self.held
 
-    async def acquire(self, _session_id, max_wait):
+    async def acquire(self, _session_id, max_wait, owner_token):
         return self.acquired
 
-    async def release(self, session_id):
+    async def release(self, session_id, owner_token):
         self.released.append(session_id)
 
 

@@ -57,7 +57,7 @@ async def test_fingerprint_drift_requires_reconciliation(tmp_path, monkeypatch):
     async def acquire(_session_id, **_kwargs):
         return True
 
-    async def release(_session_id):
+    async def release(_session_id, _owner_token):
         return None
 
     monkeypatch.setattr(
