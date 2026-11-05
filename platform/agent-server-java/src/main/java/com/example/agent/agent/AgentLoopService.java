@@ -31,8 +31,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -68,6 +72,7 @@ public class AgentLoopService {
      * VirtualThread executor would be ideal here (JDK 21) for I/O-bound tool calls.
      */
     private static final ExecutorService TOOL_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
+    private static final ExecutorService MODEL_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 
     private final AgentFactory agentFactory;
     private final ContextCompressor contextCompressor;
@@ -224,7 +229,7 @@ public class AgentLoopService {
             // Step 3: Call LLM (blocking — needed for reliable tool_call detection)
             ChatResponse response;
             try {
-                response = chatModel.call(prompt);
+                response = callModelWithTimeout(chatModel, prompt);
             } catch (Exception e) {
                 int durationMs = (int) (System.currentTimeMillis() - llmCallStartedMs);
                 emitModelCallProvenance(
@@ -497,6 +502,27 @@ public class AgentLoopService {
         sink.next(SseEventBuilder.contentChunk(null, model, "stop"));
         sink.next(SseEventBuilder.done());
         sink.complete();
+    }
+
+    ChatResponse callModelWithTimeout(ChatModel chatModel, Prompt prompt) throws Exception {
+        Future<ChatResponse> future = MODEL_EXECUTOR.submit(() -> chatModel.call(prompt));
+        try {
+            return future.get(properties.llmTimeout(), TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw new TimeoutException(
+                    "LLM call exceeded " + properties.llmTimeout() + " second deadline");
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw e;
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof Exception exception) {
+                throw exception;
+            }
+            throw new RuntimeException(cause);
+        }
     }
 
     /**
